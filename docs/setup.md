@@ -12,7 +12,7 @@ What you need:
 - [Ollama](https://ollama.com/download), which runs the model. Check with
   `ollama --version`.
 - Optional: R (for R and RStudio sessions), [jotter](https://samox73.github.io/jotter/)
-  (for Jupyter notebooks in the terminal), tmux.
+  (for Jupyter notebooks in the terminal).
 
 ## 1. Install mathbuddy
 
@@ -102,11 +102,8 @@ environment.
 ## 4. Optional extras
 
 - **jotter**, for Jupyter notebooks in the terminal: mathbuddy finds jotter's
-  kernels by itself. `mathbuddy notes.ipynb` opens both side by side.
-- **tmux**: mathbuddy starts inside tmux by itself (when you start it outside
-  tmux), so `/split` and `mathbuddy notes.ipynb` can open panes next to it.
-  Without tmux it runs as it is, without those two. `--no-tmux` (or
-  `MATHBUDDY_NO_TMUX=1`) turns this off.
+  kernels by itself. Run it in one terminal (or tmux pane) and mathbuddy in
+  another.
 - **amux**: to run mathbuddy as an amux agent, add it to `~/.amux/config.json`:
 
   ```json

@@ -13,13 +13,10 @@
 - **Menus.** `/model`, `/sessions` and the question before loading a model
   open pop-up menus in the style of crush: type to filter, arrows to choose.
   Outside an interactive terminal they print numbered lists as before.
-- **`/split`** starts jotter (with a kernel you pick) or R in a tmux pane next
-  to mathbuddy and attaches to it. `/split notes.ipynb`, `/split giac` and
-  `/split r` skip the menus.
-- **One command.** `mathbuddy notes.ipynb` replaces `mathbuddy-split`
-  (removed; delete your `~/.local/bin/mathbuddy-split` link). Started outside
-  tmux, mathbuddy now moves itself into a new tmux session so `/split` works;
-  `--no-tmux` or `MATHBUDDY_NO_TMUX=1` keeps it where it is.
+- **mathbuddy-split is gone.** mathbuddy only connects to sessions you
+  already have open; laying out panes is your terminal's or tmux's job. Run
+  jotter and mathbuddy side by side however you like. (Delete a leftover
+  `~/.local/bin/mathbuddy-split` link if you made one.)
 - **Ctrl-C at the prompt** opens crush's quit dialog (Yep! / Nope); Ctrl-C
   twice quits. Nope brings back what you had typed.
 - `-m` and `MATHBUDDY_MODEL` find models on either server (router aliases

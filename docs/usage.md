@@ -16,13 +16,13 @@ It attaches to that RStudio's R session by itself:
 attached: R · RStudio · assay-project (you started mathbuddy from inside this RStudio)
 ```
 
-**With jotter** (Jupyter notebooks in the terminal):
+**With jotter** (Jupyter notebooks in the terminal): open your notebook in
+jotter as usual, and run `mathbuddy` in another terminal, or in a pane next to
+it if you use tmux. It attaches to that notebook's kernel by itself.
 
-```sh
-mathbuddy notes.ipynb        # jotter left, mathbuddy right, in tmux
-```
-
-**Anywhere else:** `mathbuddy` attaches to the best session it can find.
+**Anywhere else:** `mathbuddy` attaches to the best session it can find, and
+`/sessions` picks another. mathbuddy never starts or arranges anything: you
+open your sessions the way you always do, and it connects to them.
 
 Useful options (all of them: `mathbuddy --help`):
 
@@ -75,20 +75,6 @@ A router loads a model the first time it's asked something, and may unload
 another one to make room. So when you pick a llama.cpp model that isn't
 loaded while another one is, mathbuddy says which and asks first: whatever
 uses the loaded model (a benchmark, another program) would be interrupted.
-
-## Starting a session from mathbuddy: /split
-
-`/split` opens a menu: jotter or R, and for jotter, which kernel (Python, R, Giac,
-Octave, Wolfram, whatever Jupyter has installed). It starts it in a pane to
-the left of mathbuddy and attaches to it as soon as it's up. A second
-`/split` goes under the first, so mathbuddy keeps its width.
-
-Without the menus: `/split notes.ipynb` opens that notebook, `/split giac`
-starts jotter with that kernel, and `/split r` starts R (R needs the bridge:
-`mathbuddy setup-r`, once).
-
-mathbuddy gives full help (looking at variables, running code) in Python and
-R sessions; with other kernels it watches and suggests code for you to run.
 
 ## Which session it's attached to
 
@@ -168,7 +154,6 @@ With several blocks, add a number: `/insert 2`.
 |---|---|
 | `/sessions` | pick a session to attach to |
 | `/attach [N or words]` | attach without the menu |
-| `/split` | start jotter (any kernel) or R next to mathbuddy, and attach |
 | `/vars` | your variables |
 | `/cells` | what mathbuddy has seen you run |
 | `/run`, `/insert`, `/console`, `/copy`, `/show` `[n]` | see above |

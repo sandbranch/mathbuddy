@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import base64
 import os
-import shlex
 import shutil
 import subprocess
 import sys
@@ -33,9 +32,6 @@ session it shows the code and asks: y(es), n(o), or a(lways for this session).
   /vars          list the session's variables
   /cells         show the cells mathbuddy has seen
   /sessions      pick a session to attach to (a list outside a terminal)
-  /split [what]  start jotter or R next to me in tmux and attach to it; with no
-                argument, menus for what to start and which kernel. Also:
-                /split notes.ipynb, /split r, /split giac (a kernel name)
   /attach [N|words]  attach to session N from that list, or one matching words
                  (rstudio, jotter, a notebook or project name); no argument: my suggestion
   /insert [n]    RStudio: put code block n into your open script at the cursor
@@ -86,8 +82,6 @@ class App:
             servers.append(LlamaCpp(args.llamacpp, think=args.think))
         self.llm = Models(servers)
         self.model_listing: list[tuple[object, str, bool]] = []
-        self.split_panes: list[str] = []  # tmux panes /split started, newest last
-        self.splits_pending = 0  # /split is waiting for its session: attach_loop leaves new ones to it
         self.assistant = Assistant(self.llm, confirm=self.confirm_run)
         self.always_run = args.yes
         self.interactive_mode = False
@@ -179,7 +173,7 @@ class App:
                     continue
                 found = self.find_sessions(probe_r=False)
                 fresh = [s for s in found if s.path not in self.known]
-                if fresh and not self.splits_pending:
+                if fresh:
                     self.listing = found
                     self.known |= {s.path for s in found}
                     for s in fresh:
@@ -272,8 +266,6 @@ class App:
             self.print_sessions(self.listing)
             if self.listing:
                 self.out("(/attach N, or /attach with words like: rstudio, jotter, demo.ipynb)")
-        elif cmd == "split":
-            self.split(arg.strip())
         elif cmd == "attach":
             if arg.isdigit() and self.listing:  # numbers refer to the last list shown
                 i = int(arg) - 1
@@ -433,111 +425,6 @@ class App:
             return False
         return a in ("y", "yes")
 
-    # -- starting a session next to mathbuddy -----------------------------------
-
-    def split(self, arg: str):
-        """Start jotter or R in a tmux pane left of mathbuddy, then attach to it."""
-        if not os.environ.get("TMUX"):
-            self.out("(/split needs tmux: install it, and start mathbuddy without --no-tmux)")
-            return
-        kernels = kernel_specs()
-        what, kernel, notebook = None, None, None
-        if arg.lower() == "r":
-            what = "r"
-        elif arg.endswith((".ipynb", ".py")):
-            what, notebook = "jotter", arg
-        elif arg in kernels:
-            what, kernel = "jotter", arg
-        elif arg:
-            self.out(f"(/split takes r, a notebook (.ipynb or .py), or a kernel: {', '.join(kernels)})")
-            return
-        if what is None:
-            options = []
-            if shutil.which("jotter"):
-                options.append(picker.Item("jotter", "jotter", "a notebook: Python, R, Giac, Octave..."))
-            if shutil.which("R"):
-                options.append(picker.Item("R", "r", "R in the terminal"))
-            if not options:
-                self.out("(neither jotter nor R is installed; docs/setup.md says how to get jotter)")
-                return
-            if not self.use_picker():
-                self.out("(use /split r, /split notes.ipynb or /split KERNEL)")
-                return
-            what = picker.pick("Start a session", options, placeholder="Type to filter")
-            if what is None:
-                return
-        if what == "jotter" and notebook is None and kernel is None:
-            if not shutil.which("jotter"):
-                self.out("(jotter isn't installed; docs/setup.md says how to get it)")
-                return
-            items = [picker.Item(spec["display_name"], name,
-                                 "full help" if spec["language"] == "python" else "watches, suggests code",
-                                 current=name == "python3")
-                     for name, spec in kernels.items()]
-            kernel = picker.pick("Kernel", items, placeholder="Type to filter kernels") if self.use_picker() else "python3"
-            if kernel is None:
-                return
-        if what == "r":
-            if not shutil.which("R"):
-                self.out("(R isn't installed)")
-                return
-            try:
-                with open(rprofile_path()) as fh:
-                    ready = RPROFILE_MARK in fh.read()
-            except OSError:
-                ready = False
-            if not ready:
-                self.out("(R won't show up here until the bridge is set up: run `mathbuddy setup-r` once)")
-            cmd = [shutil.which("R")]
-        else:
-            if not shutil.which("jotter"):
-                self.out("(jotter isn't installed; docs/setup.md says how to get it)")
-                return
-            cmd = [shutil.which("jotter")] + (["--kernel", kernel] if kernel else []) + ([notebook] if notebook else [])
-        before = {s.path for s in self.find_sessions(probe_r=False)} | self.known
-        self.known |= before  # already there: not news when the watcher looks next
-        width = os.environ.get("MATHBUDDY_WIDTH", "38%").rstrip("%")
-        other = f"{100 - int(width)}%" if width.isdigit() else "62%"
-        try:
-            alive = [p for p in self.split_panes if tmux_pane_exists(p)]
-            if alive:  # stack under the last one, so mathbuddy keeps its width
-                where = ["-v", "-t", alive[-1]]
-            else:  # left of mathbuddy
-                where = ["-h", "-b", "-l", other] + (["-t", os.environ["TMUX_PANE"]] if os.environ.get("TMUX_PANE") else [])
-            new_pane = subprocess.run(["tmux", "split-window", "-d", *where, "-c", os.getcwd(),
-                                       "-P", "-F", "#{pane_id}", " ".join(shlex.quote(c) for c in cmd)],
-                                      check=True, capture_output=True, text=True, timeout=10).stdout.strip()
-            self.split_panes = alive + [new_pane]
-        except Exception as e:
-            self.out(f"(could not split the tmux window: {getattr(e, 'stderr', '') or e})")
-            return
-        shown = " ".join([os.path.basename(cmd[0])] + cmd[1:])
-        self.out(f"(started {shown} {'below the last one' if len(self.split_panes) > 1 else 'on the left'}; "
-                 "I'll attach when it's up. To type there: click it, or Ctrl-B then an arrow key)")
-        self.splits_pending += 1
-        threading.Thread(target=self._attach_new, args=(before, "r-bridge" if what == "r" else "jupyter",
-                                                        new_pane, shown), daemon=True).start()
-
-    def _attach_new(self, before: set[str], kind: str, pane: str = "", what: str = "", timeout: float = 30.0):
-        try:
-            self._wait_and_attach(before, kind, pane, what, timeout)
-        finally:
-            self.splits_pending -= 1
-
-    def _wait_and_attach(self, before: set[str], kind: str, pane: str, what: str, timeout: float):
-        end = time.monotonic() + timeout
-        while time.monotonic() < end and not self.stop.is_set():
-            if pane and not tmux_pane_exists(pane):
-                self.out(f"({what} exited right away; run it in a terminal yourself to see why)")
-                return
-            fresh = [s for s in self.find_sessions(probe_r=False) if s.path not in before and s.kind == kind]
-            if fresh:
-                self.known |= {s.path for s in fresh}
-                self._attach_session(fresh[0])
-                return
-            self.stop.wait(0.5)
-        self.out("(the new session didn't show up within 30 s; /sessions lists what's there)")
-
     def _think_default(self):
         if not self.llm.think and self.llm.model.startswith(THINK_ALWAYS):
             self.llm.think = True  # hidden unless --think; see THINK_ALWAYS
@@ -687,10 +574,7 @@ class App:
             self.out = lambda s: print_formatted_text(s)
             print(f"{version_string()}: /help for commands")
             self.choose_model()
-            if getattr(self.args, "notebook", None) and os.environ.get("TMUX"):
-                self.split(self.args.notebook)  # jotter with it on the left; attaches when it's up
-            else:
-                self.attach(self.args.session)
+            self.attach(self.args.session)
             threading.Thread(target=self.attach_loop, daemon=True).start()
             amux_status("idle")
             keep = ""
@@ -736,46 +620,6 @@ PREFERRED_MODELS = ["qwen3.5:latest", "qwen3.5:9b", "gemma4", "qwen3:8b", "qwen3
 # Hybrid thinking models whose "think: false" Ollama 0.34 doesn't honour: with
 # it off they reason in the answer and fumble tool calls; with it on they work.
 THINK_ALWAYS = ("qwen3:",)
-
-
-def enter_tmux(argv: list[str], args) -> None:
-    """Outside tmux, start mathbuddy again inside a new tmux session, so /split
-    can open panes next to it. Returns (doing nothing) when that doesn't apply."""
-    if (args.no_tmux or os.environ.get("TMUX") or not shutil.which("tmux")
-            or not (sys.stdin.isatty() and sys.stdout.isatty())):
-        return
-    keep = {k: v for k, v in os.environ.items()
-            if k.startswith(("MATHBUDDY_", "OLLAMA_")) or k in (
-                "COLORTERM", "PATH", "VIRTUAL_ENV",  # the same programs and colours
-                "XDG_RUNTIME_DIR", "JUPYTER_RUNTIME_DIR", "JUPYTER_PATH", "IPYTHONDIR")}  # the same sessions
-    cmd = " ".join(shlex.quote(c) for c in [sys.executable, "-m", "mathbuddy", *argv])
-    keep["MATHBUDDY_FROM_PID"] = str(os.getpid())  # after exec, the tmux client: under the user's shell
-    env_args = [a for k, v in keep.items() for a in ("-e", f"{k}={v}")]
-    os.execvp("tmux", ["tmux", "new-session", "-s", f"math-{time.strftime('%H%M%S')}", "-c", os.getcwd(),
-                       *env_args, cmd,
-                       ";", "set-option", "-q", "mouse", "on"])  # click a pane to type there
-
-
-def tmux_pane_exists(pane: str) -> bool:
-    try:
-        out = subprocess.run(["tmux", "list-panes", "-a", "-F", "#{pane_id}"],
-                             capture_output=True, text=True, timeout=5).stdout.split()
-    except Exception:
-        return True  # can't tell: keep waiting
-    return pane in out
-
-
-def kernel_specs() -> dict[str, dict]:
-    """Installed Jupyter kernels: name -> {display_name, language}, python3 first."""
-    try:
-        from jupyter_client.kernelspec import KernelSpecManager
-
-        specs = KernelSpecManager().get_all_specs()
-    except Exception:
-        return {"python3": {"display_name": "Python 3", "language": "python"}}
-    out = {n: {"display_name": s["spec"].get("display_name", n), "language": s["spec"].get("language", "")}
-           for n, s in specs.items()}
-    return dict(sorted(out.items(), key=lambda kv: (kv[0] != "python3", kv[1]["display_name"].lower())))
 
 
 def names_or_empty(llm) -> list[str]:
@@ -915,7 +759,7 @@ def doctor(argv: list[str]) -> int:
     print("Other tools (optional)")
     row("ok" if shutil.which("jotter") else "--", "jotter (Jupyter notebooks in the terminal)" +
         ("" if shutil.which("jotter") else ": not installed"))
-    row("ok" if shutil.which("tmux") else "--", "tmux (for /split and `mathbuddy notes.ipynb`)" + ("" if shutil.which("tmux") else ": not installed"))
+
     amux_cfg = os.path.expanduser("~/.amux/config.json")
     if os.path.exists(amux_cfg):
         row("ok" if "mathbuddy" in open(amux_cfg).read() else "--", "amux knows mathbuddy" if "mathbuddy" in
@@ -960,7 +804,7 @@ def main(argv=None) -> int:
                "docs: docs/setup.md and docs/usage.md in the mathbuddy folder",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("question", nargs="*",
-                   help="ask once and exit; or a notebook (.ipynb) to open in jotter next to mathbuddy")
+                   help="ask once and exit (otherwise interactive)")
     p.add_argument("-m", "--model", default=env("MATHBUDDY_MODEL"),
                    help=f"model: on Ollama, or on llama.cpp with --llamacpp (default: the first of "
                    f"{', '.join(PREFERRED_MODELS)} that Ollama has). In the chat, /model lists and switches")
@@ -985,8 +829,6 @@ def main(argv=None) -> int:
     p.add_argument("--run", action="store_true", help="with a one-shot question: also run the last code block")
     p.add_argument("-y", "--yes", action="store_true",
                    help="let the model run code in the kernel without asking each time")
-    p.add_argument("--no-tmux", action="store_true", default=env("MATHBUDDY_NO_TMUX") == "1",
-                   help="don't start inside tmux (then /split can't open panes); also MATHBUDDY_NO_TMUX=1")
     p.add_argument("-V", "--version", action="version", version=version_string())
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["setup-r"]:
@@ -994,12 +836,6 @@ def main(argv=None) -> int:
     if argv[:1] == ["doctor"]:
         return doctor(argv[1:])
     args = p.parse_args(argv)
-    args.notebook = None
-    if len(args.question) == 1 and (args.question[0].endswith(".ipynb")
-                                    or (args.question[0].endswith(".py") and os.path.isfile(args.question[0]))):
-        args.notebook, args.question = args.question[0], []
-    if not args.question and not args.list:
-        enter_tmux(argv, args)  # returns only when mathbuddy should run right here
     app = App(args)
     if args.list:
         found = app.find_sessions()

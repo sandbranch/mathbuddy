@@ -37,8 +37,9 @@ mathbuddy doctor               # checks everything, says how to fix what's missi
 Then:
 
 - **RStudio:** open the Terminal tab and run `mathbuddy`.
-- **jotter:** `mathbuddy notes.ipynb` opens the notebook in jotter next to mathbuddy.
-- **Anything else:** `mathbuddy`, then `/split` to start jotter (any kernel) or R next to it.
+- **jotter or another Jupyter frontend:** open your notebook as usual, then run
+  `mathbuddy` in another terminal (or a tmux pane next to it). It finds the
+  session by itself; `/sessions` picks another.
 - Type a question, press Enter. `/help` lists the commands.
 
 How to use it, with examples: [docs/usage.md](docs/usage.md).

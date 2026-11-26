@@ -204,9 +204,6 @@ def _tmux_window_pane_pids() -> set[int]:
 def rank(sessions: list[Session]) -> list[Session]:
     """Score and order sessions, best suggestion first."""
     mine = set(ancestors(os.getpid()))
-    origin = os.environ.get("MATHBUDDY_FROM_PID", "")
-    if origin.isdigit():  # started outside tmux and moved into it: that process sits where the user ran us
-        mine |= set(ancestors(int(origin)))
     panes = _tmux_window_pane_pids()
     here = os.getcwd()
     for s in sessions:
