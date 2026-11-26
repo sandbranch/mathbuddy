@@ -99,11 +99,16 @@ async fn giac_inspection_through_user_expressions() {
     let vars = w.list_variables().await.unwrap();
     if vars.contains("TypeError") || vars.contains("no result") || vars == "(no user variables)" {
         eprintln!(
-            "skipped: {kernel} doesn't evaluate user_expressions (needs giac-kernel 9d7fff4 or later): {vars}"
+            "skipped: {kernel} doesn't evaluate user_expressions (needs giac-kernel 0.2.1 or later): {vars}"
         );
         return;
     }
-    assert!(vars.contains('a') && vars.contains('p'), "{vars}");
+    assert!(
+        vars.lines()
+            .any(|l| l.starts_with("a: ") && l.ends_with(" 3")),
+        "{vars}"
+    );
+    assert!(vars.lines().any(|l| l.starts_with("p: ")), "{vars}");
     let a = w.inspect("a").await.unwrap();
     assert!(a.contains("value: 3"), "{a}");
     let (status, out) = w.run("factor(p)").await.unwrap();

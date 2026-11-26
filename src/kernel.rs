@@ -427,11 +427,40 @@ impl KernelWatch {
         }
         if self.is_giac() {
             let mut r = self.user_exprs(&[("v", "VARS()".into())]).await?;
-            return Ok(match r.remove("v").unwrap_or(Err("no result".into())) {
-                Ok(v) if v.trim().is_empty() || v.trim() == "[]" => "(no user variables)".into(),
-                Ok(v) => format!("variables: {v}"),
-                Err(e) => e,
-            });
+            let names: Vec<String> = match r.remove("v").unwrap_or(Err("no result".into())) {
+                Ok(v) => giac_names(&v),
+                Err(e) => return Ok(e),
+            };
+            if names.is_empty() {
+                return Ok("(no user variables)".into());
+            }
+            // one line per variable: its type and a short value, in one request
+            let mut exprs = Vec::new();
+            for (i, n) in names.iter().enumerate() {
+                exprs.push((format!("t{i}"), format!("type({n})")));
+                exprs.push((format!("v{i}"), n.clone()));
+            }
+            let refs: Vec<(&str, String)> =
+                exprs.iter().map(|(k, e)| (k.as_str(), e.clone())).collect();
+            let mut r = self.user_exprs(&refs).await?;
+            let mut lines = Vec::new();
+            for (i, n) in names.iter().enumerate() {
+                let t = r
+                    .remove(&format!("t{i}"))
+                    .and_then(Result::ok)
+                    .unwrap_or_default();
+                let v = r
+                    .remove(&format!("v{i}"))
+                    .and_then(Result::ok)
+                    .unwrap_or_default();
+                let v = v.split_whitespace().collect::<Vec<_>>().join(" ");
+                lines.push(
+                    format!("{n}: {t} {}", truncate(&v, 60))
+                        .trim_end()
+                        .to_string(),
+                );
+            }
+            return Ok(lines.join("\n"));
         }
         Ok(format!(
             "(variable listing is implemented for Python and Giac kernels; this is {})",
@@ -659,6 +688,19 @@ pub fn strip_ansi(s: &str) -> String {
         .into_owned()
 }
 
+/// The names in Giac's `VARS()` answer, `[M,a,f,p]`, without Giac's own
+/// `assumptions` (made by `integrate`, `assume` and others).
+fn giac_names(v: &str) -> Vec<String> {
+    v.trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .split(',')
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty() && n.chars().all(|c| c.is_alphanumeric() || c == '_'))
+        .filter(|n| n != "assumptions")
+        .collect()
+}
+
 fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         return s.to_string();
@@ -731,6 +773,14 @@ pub fn python_str_literal(s: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn giac_variable_names() {
+        assert_eq!(giac_names("[M,a,f,p]"), vec!["M", "a", "f", "p"]);
+        assert!(giac_names("[]").is_empty());
+        assert_eq!(giac_names("[a,assumptions,g]"), vec!["a", "g"]);
+        assert!(giac_names("  ").is_empty());
+    }
 
     #[test]
     fn inspectable_rejects_calls() {

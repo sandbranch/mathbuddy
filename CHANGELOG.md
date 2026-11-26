@@ -15,7 +15,8 @@ remove the old Python install (`uv tool uninstall mathbuddy`).
   stays up to date, pop-ups for picking and for approving runs. Mouse and
   keyboard. While it answers, you can scroll, and Ctrl-C stops it.
 - **Giac.** mathbuddy looks at Giac variables too (giac-kernel evaluates
-  `user_expressions` since its commit 9d7fff4), and knows Giac's syntax.
+  `user_expressions` since 0.2.1), each with its type and a short value,
+  and knows Giac's syntax.
 - **A kernel started on its own** (not by a frontend) is named by its folder,
   and is no longer taken for "the session you started mathbuddy from".
 
