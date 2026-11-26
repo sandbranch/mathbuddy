@@ -116,7 +116,7 @@ def test_enter_tmux_only_outside_tmux_in_a_terminal(monkeypatch):
     (prog, argv), = calls
     assert prog == "tmux" and argv[:2] == ["tmux", "new-session"]
     assert "MATHBUDDY_LLAMACPP_HOST=127.0.0.1:8081" in argv and any(a.startswith("MATHBUDDY_FROM_PID=") for a in argv)
-    assert argv[-1].endswith("-m mathbuddy notes.ipynb")
+    assert argv[argv.index(";") - 1].endswith("-m mathbuddy notes.ipynb") and argv[-2:] == ["mouse", "on"]
 
 
 def test_rank_counts_where_we_were_started_from(monkeypatch):

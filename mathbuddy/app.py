@@ -495,6 +495,7 @@ class App:
                 return
             cmd = [shutil.which("jotter")] + (["--kernel", kernel] if kernel else []) + ([notebook] if notebook else [])
         before = {s.path for s in self.find_sessions(probe_r=False)} | self.known
+        self.known |= before  # already there: not news when the watcher looks next
         width = os.environ.get("MATHBUDDY_WIDTH", "38%").rstrip("%")
         other = f"{100 - int(width)}%" if width.isdigit() else "62%"
         try:
@@ -503,7 +504,7 @@ class App:
                 where = ["-v", "-t", alive[-1]]
             else:  # left of mathbuddy
                 where = ["-h", "-b", "-l", other] + (["-t", os.environ["TMUX_PANE"]] if os.environ.get("TMUX_PANE") else [])
-            new_pane = subprocess.run(["tmux", "split-window", *where, "-c", os.getcwd(),
+            new_pane = subprocess.run(["tmux", "split-window", "-d", *where, "-c", os.getcwd(),
                                        "-P", "-F", "#{pane_id}", " ".join(shlex.quote(c) for c in cmd)],
                                       check=True, capture_output=True, text=True, timeout=10).stdout.strip()
             self.split_panes = alive + [new_pane]
@@ -512,7 +513,7 @@ class App:
             return
         shown = " ".join([os.path.basename(cmd[0])] + cmd[1:])
         self.out(f"(started {shown} {'below the last one' if len(self.split_panes) > 1 else 'on the left'}; "
-                 "I'll attach when it's up)")
+                 "I'll attach when it's up. To type there: click it, or Ctrl-B then an arrow key)")
         self.splits_pending += 1
         threading.Thread(target=self._attach_new, args=(before, "r-bridge" if what == "r" else "jupyter",
                                                         new_pane, shown), daemon=True).start()
@@ -751,7 +752,8 @@ def enter_tmux(argv: list[str], args) -> None:
     keep["MATHBUDDY_FROM_PID"] = str(os.getpid())  # after exec, the tmux client: under the user's shell
     env_args = [a for k, v in keep.items() for a in ("-e", f"{k}={v}")]
     os.execvp("tmux", ["tmux", "new-session", "-s", f"math-{time.strftime('%H%M%S')}", "-c", os.getcwd(),
-                       *env_args, cmd])
+                       *env_args, cmd,
+                       ";", "set-option", "-q", "mouse", "on"])  # click a pane to type there
 
 
 def tmux_pane_exists(pane: str) -> bool:
