@@ -27,6 +27,8 @@ remove the old Python install (`uv tool uninstall mathbuddy`).
   the kernel's history where it keeps one (Python, Giac from 0.2.2), else
   from jotter's notebook and its autosave (Octave, older Giac), which jotter
   writes every 30 seconds.
+- **Copy text with the mouse.** Drag over the conversation: it is highlighted and
+  copied when you let go (Shift-drag still gives the terminal's own selection).
 - **"Your choice last time"** means that session in that folder: every Giac
   scratchpad has the same name, so the name alone no longer counts.
 - **A kernel started on its own** (not by a frontend) is named by its folder,

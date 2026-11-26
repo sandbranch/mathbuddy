@@ -54,6 +54,7 @@ the code and asks: run it, don't, or always (for this session).
 
 Keys
   F1 help · F2 variables panel · F3 model · F4 session (or click them in the bottom bar)
+  Drag over the conversation to copy text (Shift-drag: the terminal's own selection)
   PgUp/PgDn or the mouse wheel scroll the conversation · Ctrl-C stops an answer, or quits
   Up/Down walk your earlier questions
 
@@ -126,6 +127,14 @@ struct Ui {
     buttons: Vec<(Rect, Button)>,
     var_rows: Vec<(u16, String)>,
     conversation: Rect,
+    /// The conversation as plain text, a line per row, and the first row
+    /// shown: what a mouse selection copies.
+    conv_text: Vec<String>,
+    conv_start: usize,
+    /// Mouse selection in the conversation: anchor and end, as (line,
+    /// column), and whether the button is still down.
+    select: Option<((usize, usize), (usize, usize))>,
+    selecting: bool,
     quit: bool,
     started: Instant,
     seen_cells: usize,
@@ -203,6 +212,10 @@ async fn run_inner(
         buttons: Vec::new(),
         var_rows: Vec::new(),
         conversation: Rect::default(),
+        conv_text: Vec::new(),
+        conv_start: 0,
+        select: None,
+        selecting: false,
         quit: false,
         started: Instant::now(),
         seen_cells: 0,
@@ -261,6 +274,64 @@ fn amux_status(state: &str, msg: &str) {
     let mut out = std::io::stdout();
     let _ = write!(out, "\x1b]7501;state={state}:msg={b}\x1b\\");
     let _ = out.flush();
+}
+
+/// A selection's two ends in reading order.
+fn ordered((a, b): ((usize, usize), (usize, usize))) -> ((usize, usize), (usize, usize)) {
+    if a <= b { (a, b) } else { (b, a) }
+}
+
+/// The text between two (line, column) positions, both ends included,
+/// columns counted in terminal cells; trailing blanks dropped per line.
+fn selected_text(lines: &[String], (a, b): ((usize, usize), (usize, usize))) -> String {
+    let mut out = Vec::new();
+    for (i, line) in lines.iter().enumerate().take(b.0 + 1).skip(a.0) {
+        let from = if i == a.0 { a.1 } else { 0 };
+        let to = if i == b.0 { b.1 + 1 } else { usize::MAX };
+        let mut col = 0;
+        let mut s = String::new();
+        for ch in line.chars() {
+            let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            if col >= from && col < to {
+                s.push(ch);
+            }
+            col += w.max(1);
+        }
+        out.push(s.trim_end().to_string());
+    }
+    out.join("\n")
+}
+
+/// `line` with the cells in columns [from, to) shown reversed.
+fn highlight(line: Line<'static>, from: usize, to: usize) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut col = 0;
+    let pad = line.spans.iter().map(|s| s.content.width()).sum::<usize>();
+    for s in line.spans {
+        for ch in s.content.chars() {
+            let w = unicode_width::UnicodeWidthChar::width(ch)
+                .unwrap_or(0)
+                .max(1);
+            let style = if col >= from && col < to {
+                s.style.add_modifier(Modifier::REVERSED)
+            } else {
+                s.style
+            };
+            match spans.last_mut() {
+                Some(last) if last.style == style => last.content.to_mut().push(ch),
+                _ => spans.push(Span::styled(ch.to_string(), style)),
+            }
+            col += w;
+        }
+    }
+    // a selection running past the end of a line shows one cell there
+    if from <= pad && to > pad {
+        spans.push(Span::styled(
+            " ",
+            Style::default().add_modifier(Modifier::REVERSED),
+        ));
+    }
+    Line::from(spans).style(line.style)
 }
 
 fn copy_to_clipboard(text: &str) -> String {
@@ -388,7 +459,26 @@ impl Ui {
         let max_scroll = lines.len().saturating_sub(h);
         self.scroll = self.scroll.min(max_scroll);
         let start = lines.len().saturating_sub(h + self.scroll);
-        let shown: Vec<Line> = lines.into_iter().skip(start).take(h).collect();
+        self.conv_text = lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        self.conv_start = start;
+        let sel = self.select.map(ordered);
+        let shown: Vec<Line> = lines
+            .into_iter()
+            .enumerate()
+            .skip(start)
+            .take(h)
+            .map(|(i, l)| match sel {
+                Some((a, b)) if i >= a.0 && i <= b.0 => {
+                    let from = if i == a.0 { a.1 } else { 0 };
+                    let to = if i == b.0 { b.1 + 1 } else { usize::MAX };
+                    highlight(l, from, to)
+                }
+                _ => l,
+            })
+            .collect();
         let inner = Rect {
             x: area.x + 1,
             width: area.width.saturating_sub(2),
@@ -610,6 +700,7 @@ impl Ui {
 
     async fn on_key(&mut self, k: KeyEvent) {
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+        self.select = None;
         if let Some(ov) = self.overlay.take() {
             self.overlay_key(ov, k).await;
             return;
@@ -668,6 +759,15 @@ impl Ui {
         }
     }
 
+    /// Where a mouse position falls in the conversation text: (line,
+    /// column), clamped to it.
+    fn text_pos(&self, column: u16, row: u16) -> (usize, usize) {
+        let c = self.conversation;
+        let row = row.clamp(c.y, c.bottom().saturating_sub(1)) - c.y;
+        let line = (self.conv_start + row as usize).min(self.conv_text.len().saturating_sub(1));
+        (line, column.saturating_sub(c.x + 1) as usize)
+    }
+
     async fn on_mouse(&mut self, m: MouseEvent) {
         if let Some(ov) = self.overlay.take() {
             self.overlay_mouse(ov, m).await;
@@ -675,6 +775,48 @@ impl Ui {
         }
         let inside =
             |r: Rect| m.column >= r.x && m.column < r.right() && m.row >= r.y && m.row < r.bottom();
+        // selecting text in the conversation: press, drag, let go to copy
+        match m.kind {
+            MouseEventKind::Down(MouseButton::Left)
+                if inside(self.conversation) && !self.conv_text.is_empty() =>
+            {
+                let p = self.text_pos(m.column, m.row);
+                self.select = Some((p, p));
+                self.selecting = true;
+                return;
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.selecting => {
+                // past the edge: scroll, so a selection can be longer than the screen
+                if m.row < self.conversation.y {
+                    self.scroll += 1;
+                } else if m.row >= self.conversation.bottom() {
+                    self.scroll = self.scroll.saturating_sub(1);
+                }
+                if let Some((a, _)) = self.select {
+                    self.select = Some((a, self.text_pos(m.column, m.row)));
+                }
+                return;
+            }
+            MouseEventKind::Up(MouseButton::Left) if self.selecting => {
+                self.selecting = false;
+                match self.select {
+                    Some((a, b)) if a != b => {
+                        let text = selected_text(&self.conv_text, ordered((a, b)));
+                        if !text.trim().is_empty() {
+                            let how = copy_to_clipboard(&text);
+                            self.core.say(format!(
+                                "(copied {} characters, {how})",
+                                text.chars().count()
+                            ));
+                            self.take_notes();
+                        }
+                    }
+                    _ => self.select = None,
+                }
+                return;
+            }
+            _ => {}
+        }
         match m.kind {
             MouseEventKind::ScrollUp if inside(self.conversation) => self.scroll += 3,
             MouseEventKind::ScrollDown if inside(self.conversation) => {
@@ -1277,4 +1419,46 @@ fn fit(s: &str, max: usize) -> String {
         out.push_str("… ");
     }
     out
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+
+    #[test]
+    fn selected_text_spans_lines_in_cells() {
+        let lines = vec![
+            "solve(x^2+2*x+1=0, x)".to_string(),
+            "list[-1]  ".into(),
+            "x · y".into(),
+        ];
+        // one line, both ends included
+        assert_eq!(selected_text(&lines, ((0, 0), (0, 4))), "solve");
+        // across lines, trailing blanks dropped
+        assert_eq!(selected_text(&lines, ((0, 19), (1, 20))), "x)\nlist[-1]");
+        // dragged backwards: the same text
+        assert_eq!(
+            selected_text(&lines, ordered(((2, 4), (2, 0)))),
+            selected_text(&lines, ((2, 0), (2, 4)))
+        );
+        assert_eq!(selected_text(&lines, ((2, 0), (2, 4))), "x · y");
+    }
+
+    #[test]
+    fn highlight_reverses_only_the_selection() {
+        let l = Line::from(vec![
+            Span::raw("ab"),
+            Span::styled("cd", Style::default().fg(ratatui::style::Color::Red)),
+        ]);
+        let h = highlight(l, 1, 3);
+        let rev: String = h
+            .spans
+            .iter()
+            .filter(|s| s.style.add_modifier.contains(Modifier::REVERSED))
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(rev, "bc");
+        let text: String = h.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "abcd");
+    }
 }
