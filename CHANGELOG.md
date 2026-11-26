@@ -20,22 +20,30 @@ remove the old Python install (`uv tool uninstall mathbuddy`).
   and is no longer taken for "the session you started mathbuddy from".
 
 - **llama.cpp models.** mathbuddy also talks to llama.cpp's `llama-server`,
-  a single model or a router with several presets: `--llamacpp ADDRESS:PORT`
-  or `MATHBUDDY_LLAMACPP_HOST`. Tool calls, thinking and streaming work as
-  with Ollama; sampling is left to the server's preset.
+  a single model or a router with several presets: `/llamacpp ADDRESS:PORT`
+  adds one for good (`--llamacpp` for one run). Tool calls, thinking and
+  streaming work as with Ollama; sampling is left to the server's preset.
+- **A config file**, `~/.config/mathbuddy/config.toml`: Ollama's address,
+  llama-servers, context window, thinking, hints, CPU. Options and
+  `MATHBUDDY_*` variables still win; `mathbuddy doctor` shows what it read.
+- **It remembers your choices.** The model you last picked is used again
+  next time (never loaded on a router in place of another one), and the
+  session you last picked comes first after one in the same tmux window.
+  Without Ollama, a model a llama.cpp router already has loaded is used.
 - **Model selector.** `/model` lists the models on Ollama and llama.cpp,
   numbered, with the one in use and the loaded ones marked; `/model N` or
   `/model name` switches. Before picking a llama.cpp model that would make
   the router unload another one, mathbuddy asks.
 - **Menus.** `/model`, `/sessions` and the question before loading a model
-  open pop-up menus in the style of crush: type to filter, arrows to choose.
+  open pop-up menus: type to filter, arrows to choose. In the terminal's own
+  colours.
   Outside an interactive terminal they print numbered lists as before.
 - **mathbuddy-split is gone.** mathbuddy only connects to sessions you
   already have open; laying out panes is your terminal's or tmux's job. Run
   jotter and mathbuddy side by side however you like. (Delete a leftover
   `~/.local/bin/mathbuddy-split` link if you made one.)
-- **Ctrl-C at the prompt** opens crush's quit dialog (Yep! / Nope); Ctrl-C
-  twice quits. Nope brings back what you had typed.
+- **Ctrl-C at the prompt** asks before quitting (Quit / Cancel); Ctrl-C
+  twice quits. Cancel brings back what you had typed.
 - `-m` and `MATHBUDDY_MODEL` find models on either server (router aliases
   too), and `mathbuddy doctor` checks the llama.cpp server when one is set.
 

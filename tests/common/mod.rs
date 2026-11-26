@@ -173,8 +173,10 @@ pub async fn wait_for(secs: u64, what: &str, mut f: impl FnMut() -> bool) {
     }
 }
 
-/// A fake Ollama: /api/tags lists `models`; each POST /api/chat streams the
-/// next scripted answer (NDJSON lines) and records the request body.
+/// A fake model server, Ollama and llama-server at once: /api/tags and
+/// /v1/models list `models` (the router listing has the first one loaded).
+/// Each POST /api/chat streams the next scripted answer as NDJSON lines,
+/// each POST /v1/chat/completions as SSE events; both record the request.
 pub struct FakeOllama {
     pub host: String,
     pub requests: Arc<Mutex<Vec<serde_json::Value>>>,
@@ -187,6 +189,9 @@ impl FakeOllama {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let answers = Arc::new(Mutex::new(std::collections::VecDeque::from(answers)));
         let tags = serde_json::json!({"models": models.iter().map(|m| serde_json::json!({"name": m})).collect::<Vec<_>>()});
+        // the same models as a llama-server router lists them: the first loaded
+        let v1_models = serde_json::json!({"object": "list", "data": models.iter().enumerate().map(|(i, m)| serde_json::json!({
+            "id": m, "object": "model", "status": {"value": if i == 0 { "loaded" } else { "unloaded" }}})).collect::<Vec<_>>()});
         let reqs = requests.clone();
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
@@ -214,6 +219,17 @@ impl FakeOllama {
                     "/api/tags" => tags.to_string(),
                     "/api/ps" => r#"{"models": []}"#.to_string(),
                     "/api/version" => r#"{"version": "0.0-fake"}"#.to_string(),
+                    "/v1/models" => v1_models.to_string(),
+                    "/v1/chat/completions" => {
+                        reqs.lock()
+                            .unwrap()
+                            .push(serde_json::from_slice(&body).unwrap_or_default());
+                        let lines = answers.lock().unwrap().pop_front().unwrap_or_default();
+                        let mut sse: String =
+                            lines.iter().map(|l| format!("data: {l}\n\n")).collect();
+                        sse.push_str("data: [DONE]\n\n");
+                        sse
+                    }
                     "/api/chat" => {
                         reqs.lock()
                             .unwrap()

@@ -12,6 +12,7 @@ use clap::Parser;
 
 use mathbuddy::{
     assistant::{Confirm, Event},
+    config::Config,
     core::{Core, Settings},
     setup,
 };
@@ -29,13 +30,13 @@ const RESET: &str = "\x1b[0m";
 struct Args {
     /// Ask once and exit (otherwise interactive)
     question: Vec<String>,
-    /// Model, on Ollama or on llama.cpp with --llamacpp (default: the best Ollama has; also MATHBUDDY_MODEL)
+    /// Model, on Ollama or on llama.cpp with --llamacpp (default: the one you chose last time, else the best Ollama has; also MATHBUDDY_MODEL)
     #[arg(short, long, env = "MATHBUDDY_MODEL")]
     model: Option<String>,
-    /// Ollama address (default $OLLAMA_HOST; also MATHBUDDY_OLLAMA_HOST)
+    /// Ollama address (default: the config file, then $OLLAMA_HOST; also MATHBUDDY_OLLAMA_HOST)
     #[arg(long, env = "MATHBUDDY_OLLAMA_HOST")]
     host: Option<String>,
-    /// llama.cpp llama-server address, one model or a router (e.g. 127.0.0.1:8081)
+    /// llama.cpp llama-server address, one model or a router (default: the config file's)
     #[arg(long, value_name = "HOST", env = "MATHBUDDY_LLAMACPP_HOST")]
     llamacpp: Option<String>,
     /// Keep the model off the GPU (Ollama: num_gpu=0)
@@ -45,8 +46,8 @@ struct Args {
     #[arg(long, env = "MATHBUDDY_THREADS")]
     threads: Option<u32>,
     /// Model context window in tokens (Ollama)
-    #[arg(long, default_value_t = 8192, env = "MATHBUDDY_CTX")]
-    ctx: u32,
+    #[arg(long, env = "MATHBUDDY_CTX")]
+    ctx: Option<u32>,
     /// Let thinking models think (slower, shown dimmed)
     #[arg(long)]
     think: bool,
@@ -74,19 +75,23 @@ struct Args {
 }
 
 impl Args {
-    fn settings(&self) -> Settings {
+    /// The options, with the config file filling in what they leave out.
+    fn settings(&self, c: &Config) -> Settings {
         Settings {
             model: self.model.clone(),
-            host: self.host.clone(),
-            llamacpp: self.llamacpp.clone(),
-            cpu: self.cpu,
-            threads: self.threads,
-            ctx: self.ctx,
-            think: self.think,
+            host: self.host.clone().or_else(|| c.ollama.clone()),
+            llamacpp: match &self.llamacpp {
+                Some(h) => vec![h.clone()],
+                None => c.llamacpp.clone(),
+            },
+            cpu: self.cpu || c.cpu.unwrap_or(false),
+            threads: self.threads.or(c.threads),
+            ctx: self.ctx.or(c.ctx).unwrap_or(8192),
+            think: self.think || c.think.unwrap_or(false),
             session: self.session.clone(),
             kernel: self.kernel.clone(),
             connection_file: self.connection_file.clone(),
-            hints: !self.no_hints,
+            hints: !self.no_hints && c.hints.unwrap_or(true),
             yes: self.yes,
         }
     }
@@ -103,7 +108,13 @@ async fn main() {
     let args = Args::parse();
     // R sessions started from now on load this version's bridge
     let _ = setup::ensure_bridge_file();
-    let (mut core, done_rx) = Core::new(args.settings());
+    let (config, config_problem) = Config::load();
+    let settings = args.settings(&config);
+    let think = settings.think;
+    let (mut core, done_rx) = Core::new(settings);
+    if let Some(p) = config_problem {
+        core.say(format!("({p})"));
+    }
     if args.list {
         let found = core.find_sessions(true).await;
         if found.is_empty() {
@@ -117,9 +128,9 @@ async fn main() {
         return;
     }
     if !args.question.is_empty() {
-        std::process::exit(once(&mut core, &args.question.join(" "), args.run, args.think).await);
+        std::process::exit(once(&mut core, &args.question.join(" "), args.run, think).await);
     }
-    if let Err(e) = mathbuddy::ui::run(core, done_rx, args.think).await {
+    if let Err(e) = mathbuddy::ui::run(core, done_rx, think).await {
         eprintln!("mathbuddy: {e}");
         std::process::exit(1);
     }

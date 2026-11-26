@@ -129,21 +129,60 @@ pub async fn doctor() -> i32 {
     };
     println!("{}", version_string());
 
+    let (config, config_problem) = crate::config::Config::load();
+    let cpath = crate::config::config_path();
+    println!("Settings");
+    match config_problem {
+        Some(p) => row("fix", p, "fix the line it names, or delete the file"),
+        None if cpath.exists() => row("ok", format!("{}", cpath.display()), ""),
+        None => row(
+            "--",
+            format!("no {} (the defaults apply)", cpath.display()),
+            "",
+        ),
+    }
+    let last = crate::config::State::load();
+    if let Some(m) = &last.model {
+        row("--", format!("last model: {} on {}", m.name, m.server), "");
+    }
+    if let Some(s) = &last.session {
+        row("--", format!("last session chosen: {}", s.title), "");
+    }
+
     let want = std::env::var("MATHBUDDY_MODEL").ok();
-    let llama_host = std::env::var("MATHBUDDY_LLAMACPP_HOST").ok();
-    println!("Ollama (the model)");
-    let ollama = Server::ollama(
-        std::env::var("MATHBUDDY_OLLAMA_HOST").ok().as_deref(),
-        false,
-        None,
-        false,
-        8192,
-    );
+    let llama_hosts: Vec<String> = match std::env::var("MATHBUDDY_LLAMACPP_HOST") {
+        Ok(h) => vec![h],
+        Err(_) => config.llamacpp.clone(),
+    };
+    let ollama_host = std::env::var("MATHBUDDY_OLLAMA_HOST")
+        .ok()
+        .or(config.ollama.clone());
+    let ollama = Server::ollama(ollama_host.as_deref(), false, None, false, 8192);
     let o = ollama.clone();
     let (ver, names) = tokio::task::spawn_blocking(move || (o.version(), o.models()))
         .await
         .unwrap();
-    let names = match (ver, names) {
+
+    // llama.cpp first, quietly: whether Ollama is required depends on it
+    let mut llama = Vec::new();
+    for h in &llama_hosts {
+        let lc = Server::llamacpp(h, false);
+        let l = lc.clone();
+        let w = want.clone();
+        let (cat, hit) = tokio::task::spawn_blocking(move || {
+            let cat = l.catalog();
+            let hit = w.as_deref().and_then(|w| l.find(w).ok().flatten());
+            (cat, hit)
+        })
+        .await
+        .unwrap();
+        llama.push((lc, cat, hit));
+    }
+    let llama_ok = llama.iter().any(|(_, cat, _)| cat.is_ok());
+    let want_on_llama = llama.iter().any(|(_, _, hit)| hit.is_some());
+
+    println!("Ollama (models)");
+    match (ver, names) {
         (Ok(v), Ok(names)) => {
             row(
                 "ok",
@@ -154,20 +193,21 @@ pub async fn doctor() -> i32 {
                 Some(w) if find_model(&names, w).is_some() => {
                     row("ok", format!("MATHBUDDY_MODEL={w}"), "")
                 }
-                Some(w) if llama_host.is_some() => row(
+                Some(w) if want_on_llama => row(
                     "--",
-                    format!("MATHBUDDY_MODEL={w} is not on Ollama (checked under llama.cpp below)"),
+                    format!("MATHBUDDY_MODEL={w} is not on Ollama (it is on llama.cpp, below)"),
                     "",
                 ),
                 Some(w) => row(
                     "fix",
-                    format!("MATHBUDDY_MODEL={w} is not on this server"),
-                    &format!("ollama pull {w}"),
+                    format!("MATHBUDDY_MODEL={w} is on none of your servers"),
+                    &format!("ollama pull {w}, or pick one with F3 in mathbuddy"),
                 ),
                 None => match PREFERRED_MODELS.iter().find_map(|m| find_model(&names, m)) {
-                    Some(b) => row(
-                        "ok",
-                        format!("model: {b} (the best one this server has)"),
+                    Some(b) => row("ok", format!("best model here: {b}"), ""),
+                    None if llama_ok => row(
+                        "--",
+                        format!("none of {} is here", PREFERRED_MODELS.join(", ")),
                         "",
                     ),
                     None => row(
@@ -177,77 +217,50 @@ pub async fn doctor() -> i32 {
                     ),
                 },
             }
-            names
         }
-        (Err(e), _) | (_, Err(e)) => {
-            row(
-                "fix",
-                format!("cannot reach Ollama at {} ({e})", ollama.base),
-                "start it (systemctl --user start ollama), or point at another machine: mathbuddy --host ADDRESS:11434",
-            );
-            Vec::new()
-        }
-    };
-
-    println!("llama.cpp (optional, more models)");
-    match &llama_host {
-        None => row(
-            "--",
-            "not set up (to use llama-server models: MATHBUDDY_LLAMACPP_HOST=ADDRESS:PORT)".into(),
-            "",
+        (Err(e), _) | (_, Err(e)) => row(
+            if llama_ok { "--" } else { "fix" },
+            format!("cannot reach Ollama at {} ({e})", ollama.base),
+            if llama_ok {
+                ""
+            } else {
+                "start it (systemctl --user start ollama), point at another machine (ollama = \"ADDRESS:11434\" in the config file), or use llama.cpp (below)"
+            },
         ),
-        Some(h) => {
-            let lc = Server::llamacpp(h, false);
-            let l = lc.clone();
-            let w = want.clone();
-            let (cat, hit) = tokio::task::spawn_blocking(move || {
-                let cat = l.catalog();
-                let hit = w.as_deref().map(|w| l.find(w).ok().flatten());
-                (cat, hit)
-            })
-            .await
-            .unwrap();
-            match cat {
-                Ok(cat) => {
-                    let loaded: Vec<&str> = cat
-                        .iter()
-                        .filter(|(_, on)| *on)
-                        .map(|(n, _)| n.as_str())
-                        .collect();
-                    let lt = if loaded.is_empty() {
-                        ", none loaded".into()
-                    } else {
-                        format!(", loaded: {}", loaded.join(", "))
-                    };
-                    row(
-                        "ok",
-                        format!("reachable at {}: {} model(s){lt}", lc.base, cat.len()),
-                        "",
-                    );
-                    if let Some(w) = &want
-                        && find_model(&names, w).is_none()
-                    {
-                        let found = hit.flatten().is_some();
-                        row(
-                            if found { "ok" } else { "fix" },
-                            format!(
-                                "MATHBUDDY_MODEL={w}{}",
-                                if found { "" } else { " is on neither server" }
-                            ),
-                            if found {
-                                ""
-                            } else {
-                                "pick one with /model in mathbuddy"
-                            },
-                        );
-                    }
-                }
-                Err(e) => row(
-                    "fix",
-                    format!("cannot reach llama-server at {} ({e})", lc.base),
-                    "start llama-server, or fix MATHBUDDY_LLAMACPP_HOST",
-                ),
+    }
+
+    println!("llama.cpp (models)");
+    if llama.is_empty() {
+        row(
+            "--",
+            "no llama-server set up".into(),
+            "to use one: /llamacpp ADDRESS:PORT in mathbuddy (saved in the config file)",
+        );
+    }
+    for (lc, cat, _) in llama {
+        match cat {
+            Ok(cat) => {
+                let loaded: Vec<&str> = cat
+                    .iter()
+                    .filter(|(_, on)| *on)
+                    .map(|(n, _)| n.as_str())
+                    .collect();
+                let lt = if loaded.is_empty() {
+                    ", none loaded".into()
+                } else {
+                    format!(", loaded: {}", loaded.join(", "))
+                };
+                row(
+                    "ok",
+                    format!("reachable at {}: {} model(s){lt}", lc.base, cat.len()),
+                    "",
+                );
             }
+            Err(e) => row(
+                "fix",
+                format!("cannot reach llama-server at {} ({e})", lc.base),
+                "start it, or remove the address from the config file",
+            ),
         }
     }
 
@@ -346,7 +359,10 @@ pub async fn doctor() -> i32 {
     }
 
     println!("Sessions I can see right now");
-    let found = crate::session::rank(crate::session::discover(None, true).await);
+    let found = crate::session::rank(
+        crate::session::discover(None, true).await,
+        crate::config::State::load().session.as_ref(),
+    );
     if found.is_empty() {
         println!("  (none: start jotter, or R/RStudio after setup-r)");
     }

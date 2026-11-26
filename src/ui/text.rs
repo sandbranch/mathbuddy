@@ -6,17 +6,21 @@ use ratatui::{
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-// crush's default theme (charmtone)
-pub const PRIMARY: Color = Color::Rgb(0x6B, 0x50, 0xFF); // Charple
-pub const SECONDARY: Color = Color::Rgb(0xFF, 0x60, 0xFF); // Dolly
-pub const ON_PRIMARY: Color = Color::Rgb(0xFF, 0xFA, 0xF1); // Butter
-pub const FG: Color = Color::Rgb(0xEC, 0xEB, 0xF0); // Sash
-pub const SUBTLE: Color = Color::Rgb(0xBF, 0xBC, 0xC8); // Smoke
-pub const MOST_SUBTLE: Color = Color::Rgb(0x60, 0x5F, 0x6B); // Oyster
-pub const RULE: Color = Color::Rgb(0x3A, 0x39, 0x43); // Char
-pub const GOOD: Color = Color::Rgb(0x12, 0xC7, 0x8F); // Guac
-pub const BAD: Color = Color::Rgb(0xFF, 0x57, 0x7D); // Coral
-pub const CODE: Color = Color::Rgb(0x85, 0x83, 0x92); // Squid, for the code gutter
+// The terminal's own colours, so mathbuddy follows whatever theme it has.
+pub const PRIMARY: Color = Color::Blue;
+pub const SECONDARY: Color = Color::Cyan;
+pub const FG: Color = Color::Reset;
+pub const SUBTLE: Color = Color::Reset;
+pub const MOST_SUBTLE: Color = Color::DarkGray;
+pub const RULE: Color = Color::DarkGray;
+pub const GOOD: Color = Color::Green;
+pub const BAD: Color = Color::Red;
+pub const CODE: Color = Color::DarkGray;
+
+/// The chosen row or button: the terminal's colours swapped.
+pub fn chosen() -> Style {
+    Style::default().add_modifier(Modifier::REVERSED)
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Verdict {

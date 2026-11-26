@@ -559,8 +559,10 @@ fn tmux_window_pane_pids() -> Vec<u32> {
         .unwrap_or_default()
 }
 
-/// Score and order sessions, best suggestion first.
-pub fn rank(mut sessions: Vec<Found>) -> Vec<Found> {
+/// Score and order sessions. Best first: the session mathbuddy runs inside, then one in the same tmux
+/// window, then the one you chose last time, then one in the same folder,
+/// then the newest.
+pub fn rank(mut sessions: Vec<Found>, last: Option<&crate::config::LastSession>) -> Vec<Found> {
     let mine = ancestors(std::process::id());
     let panes = tmux_window_pane_pids();
     let here = std::env::current_dir()
@@ -568,15 +570,16 @@ pub fn rank(mut sessions: Vec<Found>) -> Vec<Found> {
         .unwrap_or_default();
     for s in &mut sessions {
         (s.score, s.reason) = (0, String::new());
-        let Some(pid) = s.pid else { continue };
-        let chain = ancestors(pid);
-        if mine.contains(&pid) {
+        let chain = s.pid.map(ancestors).unwrap_or_default();
+        if s.pid.is_some_and(|pid| mine.contains(&pid)) {
             (s.score, s.reason) = (
-                3,
+                4,
                 format!("you started mathbuddy from inside this {}", s.frontend),
             );
-        } else if !panes.is_empty() && chain.iter().any(|p| panes.contains(p)) {
-            (s.score, s.reason) = (2, "next to you in this tmux window".into());
+        } else if chain.iter().any(|p| panes.contains(p)) {
+            (s.score, s.reason) = (3, "next to you in this tmux window".into());
+        } else if last.is_some_and(|l| l.path == s.path || l.title == s.title()) {
+            (s.score, s.reason) = (2, "your choice last time".into());
         } else if !s.cwd.is_empty() && s.cwd == here {
             (s.score, s.reason) = (1, "same folder as you".into());
         }
@@ -628,9 +631,23 @@ mod tests {
 
     #[test]
     fn newest_first_without_hints() {
-        let r = rank(vec![found("old.ipynb", 1.0), found("new.ipynb", 2.0)]);
+        let r = rank(vec![found("old.ipynb", 1.0), found("new.ipynb", 2.0)], None);
         assert_eq!(r[0].label, "new.ipynb");
         assert_eq!(r[0].reason, "the newest");
+    }
+
+    #[test]
+    fn last_choice_beats_newest() {
+        let last = crate::config::LastSession {
+            path: PathBuf::from("/run/gone.json"),
+            title: "Python · jotter · old.ipynb".into(),
+        };
+        let r = rank(
+            vec![found("old.ipynb", 1.0), found("new.ipynb", 2.0)],
+            Some(&last),
+        );
+        assert_eq!(r[0].label, "old.ipynb");
+        assert_eq!(r[0].reason, "your choice last time");
     }
 
     #[test]

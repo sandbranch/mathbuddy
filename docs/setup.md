@@ -51,14 +51,33 @@ mathbuddy --host gpu-desktop:11434
 That works only if Ollama on that machine listens on an address you can
 reach: set `OLLAMA_HOST` in its systemd service to an address on your
 network or VPN. Ollama's default is 127.0.0.1, which only the machine
-itself can reach. To make it permanent on the machine you
-run mathbuddy on, set `MATHBUDDY_OLLAMA_HOST` in your shell profile.
+itself can reach. To make it permanent, put it in mathbuddy's config file
+(below): `ollama = "gpu-desktop:11434"`.
 
 **Models in llama.cpp:** if you run llama.cpp's `llama-server` (one model,
-or a router with several presets), set `MATHBUDDY_LLAMACPP_HOST` to its
-address, for example `127.0.0.1:8081`, in your shell profile. Its models then
-show up in `/model` next to Ollama's, and `mathbuddy doctor` checks it. Ollama
-stays the default; a llama.cpp model is used only when you pick one.
+or a router with several presets), type `/llamacpp 127.0.0.1:8081` (its
+address) in mathbuddy once. It is saved in the config file, its models show
+up in the model picker (F3) next to Ollama's, and `mathbuddy doctor` checks
+it. mathbuddy never makes a llama.cpp router load a model on its own: it
+uses one you pick, or one that is already loaded when Ollama isn't there.
+
+**The config file** is `~/.config/mathbuddy/config.toml`. Everything in it
+is optional; command-line options and `MATHBUDDY_*` variables win over it:
+
+```toml
+ollama = "gpu-desktop:11434"     # default: $OLLAMA_HOST, then 127.0.0.1:11434
+llamacpp = ["127.0.0.1:8081"]    # llama-servers, single models or routers
+ctx = 8192                       # model context window (Ollama)
+think = false                    # let thinking models think
+hints = true                     # one-line hints when a cell raises an error
+cpu = false                      # keep the model off the graphics card (Ollama)
+threads = 8                      # CPU threads for the model, with cpu = true
+```
+
+mathbuddy also remembers the model and the session you last chose, in
+`~/.local/state/mathbuddy/state.json`. Next time it starts with that model
+(if its server still has it) and prefers that session, after one running in
+the same tmux window as mathbuddy.
 
 **GPU or CPU:** Ollama uses the graphics card by itself when it can. When
 the card is busy with something else, `mathbuddy --cpu` keeps the model off

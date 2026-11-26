@@ -2,6 +2,7 @@
 //! tests (tests/) can drive real kernels and R sessions through them.
 
 pub mod assistant;
+pub mod config;
 pub mod core;
 pub mod http;
 pub mod kernel;

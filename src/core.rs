@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     assistant::Assistant,
+    config::{LastModel, LastSession, State},
     llm::{Models, PREFERRED_MODELS, Server, ServerKind, find_model},
     session::{CellDone, Connection, Found, discover, pick, rank},
 };
@@ -17,7 +18,7 @@ use crate::{
 pub struct Settings {
     pub model: Option<String>,
     pub host: Option<String>,
-    pub llamacpp: Option<String>,
+    pub llamacpp: Vec<String>,
     pub cpu: bool,
     pub threads: Option<u32>,
     pub ctx: u32,
@@ -57,10 +58,9 @@ impl Core {
             s.think,
             s.ctx,
         )];
-        if let Some(h) = &s.llamacpp {
+        for h in &s.llamacpp {
             servers.push(Server::llamacpp(h, s.think));
         }
-        servers[0].model = PREFERRED_MODELS[0].into();
         let (done_tx, done_rx) = mpsc::unbounded_channel();
         let core = Core {
             always_run: s.yes,
@@ -88,9 +88,10 @@ impl Core {
 
     // -- models ----------------------------------------------------------
 
-    /// -m picks a model on any server. Without it, the best one Ollama has:
-    /// never a llama.cpp model, since asking a llama.cpp router for a model
-    /// it hasn't loaded makes it load one, maybe in place of another.
+    /// -m picks a model on any server. Without it, the one you chose last
+    /// time, if its server still has it. Otherwise the best one Ollama has,
+    /// or else a model a llama.cpp server already has loaded: never one it
+    /// would have to load, since that may unload another in use.
     pub async fn choose_model(&mut self) {
         if let Some(want) = self.settings.model.clone() {
             match self.locate(&want).await {
@@ -101,12 +102,22 @@ impl Core {
                         self.say(warning); // named with -m: warn, don't ask
                     }
                     self.models.use_model(i, &name);
+                    self.remember_model();
                 }
                 None => self.say(format!(
                     "(model {want} isn't on any of your servers; /model lists what they have)"
                 )),
             }
             return;
+        }
+        if let Some(last) = State::load().model {
+            match self.restore_model(&last).await {
+                Ok(()) => return,
+                Err(why) => self.say(format!(
+                    "(last time's model, {} on {}, {why})",
+                    last.name, last.server
+                )),
+            }
         }
         let ollama = self.models.servers[0].clone();
         let names = match tokio::task::spawn_blocking(move || ollama.models())
@@ -115,15 +126,11 @@ impl Core {
         {
             Ok(n) => n,
             Err(e) => {
-                let more = if self.models.servers.len() > 1 {
-                    "; /model lists the llama.cpp models"
-                } else {
-                    ""
-                };
                 self.say(format!(
-                    "(can't reach Ollama at {}: {e}{more})",
+                    "(can't reach Ollama at {}: {e})",
                     self.models.servers[0].base
                 ));
+                self.use_loaded_llamacpp().await;
                 return;
             }
         };
@@ -145,6 +152,121 @@ impl Core {
                 }
             )),
         }
+    }
+
+    /// Use the remembered model if its server is configured and has it.
+    async fn restore_model(&mut self, last: &LastModel) -> Result<(), String> {
+        let Some(i) = self
+            .models
+            .servers
+            .iter()
+            .position(|s| s.base == last.server && s.kind.name() == last.kind)
+        else {
+            return Err("isn't on a server you have set up now".into());
+        };
+        let s = self.models.servers[i].clone();
+        let cat = tokio::task::spawn_blocking(move || s.catalog())
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| format!("can't be reached ({e})"))?;
+        if !cat.iter().any(|(n, _)| *n == last.name) {
+            return Err("is no longer there".into());
+        }
+        // never load it in place of a model something else is using; F3 asks
+        if self.models.servers[i].kind == ServerKind::LlamaCpp
+            && self.llamacpp_swap_warning(i, &last.name).await.is_some()
+        {
+            return Err(
+                "isn't loaded now, and loading it could unload another model \
+                        (F3 loads it when you want)"
+                    .into(),
+            );
+        }
+        self.models.use_model(i, &last.name);
+        let label = self.models.label();
+        self.say(format!("(model: {label}, as last time; F3 picks another)"));
+        Ok(())
+    }
+
+    /// Without Ollama: a model some llama.cpp server already has loaded.
+    async fn use_loaded_llamacpp(&mut self) {
+        for (i, cat) in self.catalog().await {
+            if self.models.servers[i].kind != ServerKind::LlamaCpp {
+                continue;
+            }
+            match cat {
+                Ok(cat) => {
+                    if let Some((name, _)) = cat.iter().find(|(_, loaded)| *loaded) {
+                        self.models.use_model(i, name);
+                        let label = self.models.label();
+                        self.say(format!(
+                            "(model: {label}, already loaded there; F3 picks another)"
+                        ));
+                        return;
+                    }
+                }
+                Err(e) => self.say(format!(
+                    "(can't reach llama-server at {}: {e})",
+                    self.models.servers[i].base
+                )),
+            }
+        }
+        if self.models.servers.len() > 1 {
+            self.say("(no model chosen yet: F3 lists what your servers have)");
+        } else {
+            self.say(
+                "(no model to use: start Ollama, or add a llama-server with /llamacpp ADDRESS)",
+            );
+        }
+    }
+
+    fn remember_model(&self) {
+        let s = self.models.server();
+        let last = LastModel {
+            kind: s.kind.name().into(),
+            server: s.base.clone(),
+            name: s.model.clone(),
+        };
+        State::update(|st| st.model = Some(last));
+    }
+
+    /// Remember the attached session as your choice for next time.
+    pub fn remember_session(&self) {
+        if let Some(s) = &self.current {
+            let last = LastSession {
+                path: s.path.clone(),
+                title: s.title(),
+            };
+            State::update(|st| st.session = Some(last));
+        }
+    }
+
+    /// Add a llama-server (and save it in the config file).
+    pub async fn add_llamacpp(&mut self, host: &str) {
+        let server = Server::llamacpp(host, self.settings.think);
+        if self.models.servers.iter().any(|s| s.base == server.base) {
+            self.say(format!("({} is already one of your servers)", server.base));
+            return;
+        }
+        let probe = server.clone();
+        match tokio::task::spawn_blocking(move || probe.catalog()).await {
+            Ok(Ok(cat)) => self.say(format!(
+                "(llama-server at {}: {} model(s); F3 lists them)",
+                server.base,
+                cat.len()
+            )),
+            _ => self.say(format!(
+                "(nothing answers at {} yet; added anyway, F3 shows it when it does)",
+                server.base
+            )),
+        }
+        let path = crate::config::config_path();
+        match crate::config::add_llamacpp(&path, host) {
+            Ok(_) => self.say(format!("(saved in {})", path.display())),
+            Err(e) => self.say(format!("(couldn't save it in the config: {e:#})")),
+        }
+        self.settings.llamacpp.push(host.to_string());
+        self.models.servers.push(server);
     }
 
     pub async fn locate(&self, want: &str) -> Option<(usize, String)> {
@@ -214,13 +336,15 @@ impl Core {
         };
         let label = self.models.label();
         self.say(format!("(model: {label}{note})"));
+        self.remember_model();
     }
 
     // -- sessions ----------------------------------------------------------
 
     pub async fn find_sessions(&self, probe_r: bool) -> Vec<Found> {
         let pats = self.settings.kernel.as_ref().map(|k| vec![k.clone()]);
-        rank(discover(pats.as_deref(), probe_r).await)
+        let last = State::load().session;
+        rank(discover(pats.as_deref(), probe_r).await, last.as_ref())
     }
 
     pub fn session_lines(&self, found: &[Found]) -> Vec<String> {

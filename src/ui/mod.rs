@@ -68,9 +68,13 @@ Commands
   /insert [n]    RStudio: put code block n into your open script at the cursor
   /console [n]   RStudio: send code block n to the console, as if you typed it
   /model [name]  pick a model on your Ollama and llama.cpp servers (F3), or name one
+  /llamacpp ADDRESS  add a llama-server (one model or a router), saved in the config
   /hints on|off  one-line hints when a cell raises an error
   /clear         forget the conversation (not the cells)
-  /help, /quit";
+  /help, /quit
+
+mathbuddy remembers the model and the session you last chose. Settings (Ollama's address,
+llama-servers, hints...) live in ~/.config/mathbuddy/config.toml; `mathbuddy doctor` shows them.";
 
 /// What the bottom bar's buttons do.
 #[derive(Clone, Copy)]
@@ -146,12 +150,7 @@ pub async fn run(
 }
 
 fn history_file() -> PathBuf {
-    let state = std::env::var("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".local/state")
-        });
-    state.join("mathbuddy").join("history.jsonl")
+    crate::config::state_dir().join("history.jsonl")
 }
 
 fn load_history() -> Vec<String> {
@@ -211,7 +210,9 @@ async fn run_inner(
     terminal.draw(|f| ui.draw(f))?;
     ui.core.choose_model().await;
     let target = ui.core.settings.session.clone();
-    ui.core.attach(target.as_deref(), false).await;
+    if ui.core.attach(target.as_deref(), false).await && target.is_some() {
+        ui.core.remember_session();
+    }
     ui.take_notes();
     amux_status("idle", "");
 
@@ -379,7 +380,7 @@ impl Ui {
             let dots =
                 ["·  ", "·· ", "···"][(self.started.elapsed().as_millis() / 300 % 3) as usize];
             lines.push(Line::styled(
-                format!("{dots}"),
+                dots.to_string(),
                 Style::default().fg(SECONDARY),
             ));
         }
@@ -398,10 +399,7 @@ impl Ui {
             let tag = format!(" ↓ {} more (PgDn) ", self.scroll);
             let w = tag.width() as u16;
             f.render_widget(
-                Paragraph::new(Span::styled(
-                    tag,
-                    Style::default().fg(ON_PRIMARY).bg(PRIMARY),
-                )),
+                Paragraph::new(Span::styled(tag, chosen())),
                 Rect {
                     x: area.right().saturating_sub(w + 1),
                     y: area.bottom().saturating_sub(1),
@@ -544,7 +542,7 @@ impl Ui {
             self.core.session_label(),
             if self.core.hints { "on" } else { "off" }
         );
-        let st = Style::default().fg(SUBTLE).bg(RULE);
+        let st = chosen();
         f.render_widget(
             Paragraph::new(Span::styled(
                 format!("{left:<w$}", w = area.width as usize),
@@ -568,9 +566,9 @@ impl Ui {
             let w = l.width() as u16;
             let on = matches!(b, Button::Vars) && self.vars_open;
             let bst = if on {
-                Style::default().fg(ON_PRIMARY).bg(PRIMARY)
+                Style::default().fg(PRIMARY).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(FG).bg(MOST_SUBTLE)
+                Style::default()
             };
             let r = Rect {
                 x,
@@ -712,10 +710,11 @@ impl Ui {
                 Outcome::Chosen(yes) => self.quit = yes,
                 _ => self.overlay = Some(Overlay::Quit(q)),
             },
-            Overlay::Text(mut t) => match t.key(k) {
-                Outcome::Open => self.overlay = Some(Overlay::Text(t)),
-                _ => {}
-            },
+            Overlay::Text(mut t) => {
+                if let Outcome::Open = t.key(k) {
+                    self.overlay = Some(Overlay::Text(t))
+                }
+            }
         }
     }
 
@@ -862,7 +861,9 @@ impl Ui {
             PickerFor::Session(found) => {
                 if let Some(s) = found.get(v).cloned() {
                     self.core.listing = found;
-                    self.core.attach_to(&s, false).await;
+                    if self.core.attach_to(&s, false).await {
+                        self.core.remember_session();
+                    }
                     self.take_notes();
                     self.refresh_vars();
                 }
@@ -1176,7 +1177,9 @@ impl Ui {
             "sessions" => self.open_session_picker().await,
             "attach" => {
                 let target = if arg.is_empty() { None } else { Some(arg) };
-                self.core.attach(target, false).await;
+                if self.core.attach(target, false).await && target.is_some() {
+                    self.core.remember_session();
+                }
                 self.take_notes();
                 self.refresh_vars();
             }
@@ -1202,6 +1205,26 @@ impl Ui {
                             self.note(format!("(no model {arg:?} on your servers; F3 lists them)"))
                         }
                     }
+                }
+            }
+            "llamacpp" => {
+                if arg.is_empty() {
+                    let hosts: Vec<String> = self
+                        .core
+                        .models
+                        .servers
+                        .iter()
+                        .filter(|s| s.kind == crate::llm::ServerKind::LlamaCpp)
+                        .map(|s| s.base.clone())
+                        .collect();
+                    if hosts.is_empty() {
+                        self.note("(no llama-server yet: /llamacpp ADDRESS:PORT adds one)");
+                    } else {
+                        self.note(format!("(llama-servers: {})", hosts.join(", ")));
+                    }
+                } else {
+                    self.core.add_llamacpp(arg).await;
+                    self.take_notes();
                 }
             }
             "hints" => {

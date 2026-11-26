@@ -30,7 +30,7 @@ Useful options (all of them: `mathbuddy --help`):
 |---|---|
 | `--cpu` | keep the model off the graphics card (when the card is busy) |
 | `-m MODEL` | use a specific model, on Ollama or on llama.cpp |
-| `--llamacpp ADDRESS:PORT` | also offer the models of a llama.cpp `llama-server` |
+| `--llamacpp ADDRESS:PORT` | use this `llama-server` instead of the config file's (`/llamacpp` adds one for good) |
 | `--host ADDRESS:11434` | use another machine's Ollama |
 | `-s WORDS` | attach to a particular session, e.g. `-s rstudio` or `-s demo.ipynb` |
 | `-y` | run code without asking each time (be sure you want this) |
@@ -82,11 +82,16 @@ instead.
 its presets. To start with a model, use `-m`, or set `MATHBUDDY_MODEL` in your
 shell profile to always start with it.
 
-llama.cpp models appear when mathbuddy knows where `llama-server` is:
-`--llamacpp 127.0.0.1:8081`, or `MATHBUDDY_LLAMACPP_HOST=127.0.0.1:8081` in
-your shell profile. Both a single-model `llama-server` and a router (several
-presets, loaded on demand) work. mathbuddy never picks a llama.cpp model by
-itself, and it leaves sampling to the server's settings for each model.
+llama.cpp models appear when mathbuddy knows where `llama-server` is: type
+`/llamacpp 127.0.0.1:8081` once and it is saved in the config file
+(`~/.config/mathbuddy/config.toml`, see [setup](setup.md)). Both a
+single-model `llama-server` and a router (several presets, loaded on demand)
+work. mathbuddy leaves sampling to the server's settings for each model.
+
+mathbuddy remembers the model you pick and starts with it next time. It
+never makes a router load a model by itself: a remembered model that isn't
+loaded while another one is waits until you pick it again, and without
+Ollama it uses a model a router already has loaded.
 
 A router loads a model the first time it's asked something, and may unload
 another one to make room. So when you pick a llama.cpp model that isn't
@@ -98,7 +103,8 @@ uses the loaded model (a benchmark, another program) would be interrupted.
 The bottom bar always shows it, e.g. `R · RStudio · assay-project · 12 seen`.
 When several sessions are running, mathbuddy picks one and tells you why:
 first the one you started it from inside, then one next to it in the same
-tmux window, one in the same folder, then the newest.
+tmux window, then the one you chose last time (with F4 or `/attach`), one in
+the same folder, then the newest.
 
 ```
 » /sessions

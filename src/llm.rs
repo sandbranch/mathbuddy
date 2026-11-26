@@ -443,7 +443,9 @@ impl Models {
 
     pub fn label(&self) -> String {
         let s = self.server();
-        if s.cpu {
+        if s.model.is_empty() {
+            "no model".into()
+        } else if s.cpu {
             format!("{} (CPU)", s.model)
         } else if s.kind == ServerKind::LlamaCpp {
             format!("{} (llama.cpp)", s.model)

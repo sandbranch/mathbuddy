@@ -1,12 +1,12 @@
-//! Pop-ups in the style of crush's dialogs: a rounded box, a gradient title,
-//! a filter you type into, grouped items, the chosen row on the primary
-//! colour, buttons, and the keys at the bottom. Mouse and keyboard.
+//! Pop-ups: a box with a title, a filter you type into, grouped items, the
+//! chosen row highlighted, buttons, and the keys at the bottom. Mouse and
+//! keyboard.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     Frame,
     layout::{Position, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
@@ -33,41 +33,19 @@ pub fn centred(area: Rect, w: u16, h: u16) -> Rect {
     }
 }
 
-/// A title in crush's Charple-to-Dolly gradient, followed by ╱ to `width`.
-fn gradient_title(title: &str, width: usize) -> Line<'static> {
-    let (a, b) = ((0x6Bu8, 0x50u8, 0xFFu8), (0xFFu8, 0x60u8, 0xFFu8));
-    let fill = width.saturating_sub(title.width() + 1);
-    let text: Vec<char> = title
-        .chars()
-        .chain(std::iter::once(' '))
-        .chain(std::iter::repeat_n('╱', fill))
-        .collect();
-    let n = text.len().max(2) - 1;
-    let spans = text
-        .iter()
-        .enumerate()
-        .map(|(i, c)| {
-            let t = i as f32 / n as f32;
-            let mix = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
-            let st = Style::default().fg(Color::Rgb(mix(a.0, b.0), mix(a.1, b.1), mix(a.2, b.2)));
-            Span::styled(
-                c.to_string(),
-                if i < title.chars().count() {
-                    st.add_modifier(Modifier::BOLD)
-                } else {
-                    st
-                },
-            )
-        })
-        .collect::<Vec<_>>();
-    Line::from(spans)
+/// A dialog's title: plain bold text.
+fn title_line(title: &str) -> Line<'static> {
+    Line::styled(
+        title.to_string(),
+        Style::default().add_modifier(Modifier::BOLD),
+    )
 }
 
 fn frame_block() -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(PRIMARY))
+        .border_style(Style::default().fg(RULE))
 }
 
 fn keys_line(keys: &[(&str, &str)]) -> Line<'static> {
@@ -85,7 +63,7 @@ fn keys_line(keys: &[(&str, &str)]) -> Line<'static> {
     Line::from(spans)
 }
 
-/// Every typed character appears in order (fuzzy, like crush's filter).
+/// Every typed character appears in order (fuzzy).
 pub fn matches(query: &str, hay: &str) -> bool {
     let hay = hay.to_lowercase();
     let mut it = hay.chars();
@@ -179,7 +157,7 @@ impl Picker {
         };
         let w = inner.width as usize;
         f.render_widget(
-            Paragraph::new(gradient_title(&self.title, w)),
+            Paragraph::new(title_line(&self.title)),
             Rect { height: 1, ..inner },
         );
         let input = if self.query.is_empty() {
@@ -269,7 +247,7 @@ impl Picker {
                 .saturating_sub(2 + mark.width() + text.width() + it.detail.width())
                 .max(1);
             let line = if *i == self.sel {
-                let st = Style::default().bg(PRIMARY).fg(ON_PRIMARY);
+                let st = chosen();
                 Line::from(vec![
                     Span::styled(format!(" {mark}{text}{}", " ".repeat(gap)), st),
                     Span::styled(format!("{} ", it.detail), st.add_modifier(Modifier::ITALIC)),
@@ -398,12 +376,12 @@ impl Buttons {
         let mut x = row.x + (row.width.saturating_sub(total as u16)) / 2;
         self.hits.clear();
         for (i, l) in self.labels.iter().enumerate() {
-            let text = format!("   {l}   ");
+            let text = format!("[  {l}  ]");
             let w = text.width() as u16;
             let st = if i == self.sel {
-                Style::default().bg(SECONDARY).fg(ON_PRIMARY)
+                chosen().add_modifier(Modifier::BOLD)
             } else {
-                Style::default().bg(RULE).fg(FG)
+                Style::default()
             };
             let r = Rect {
                 x,
@@ -464,10 +442,7 @@ impl Approval {
             height: r.height.saturating_sub(2),
         };
         f.render_widget(
-            Paragraph::new(gradient_title(
-                "Run this in your session?",
-                inner.width as usize,
-            )),
+            Paragraph::new(title_line("Run this in your session?")),
             Rect { height: 1, ..inner },
         );
         let code_area = Rect {
@@ -584,7 +559,7 @@ impl Approval {
     }
 }
 
-/// crush's quit dialog: Yep! / Nope, Yep! chosen. Ctrl-C again (or y) quits.
+/// The quit dialog: Quit / Cancel, Quit chosen. Ctrl-C again (or y) quits.
 pub struct Quit {
     buttons: Buttons,
 }
@@ -593,7 +568,7 @@ impl Default for Quit {
     fn default() -> Self {
         Quit {
             buttons: Buttons {
-                labels: vec!["Yep!", "Nope"],
+                labels: vec!["Quit", "Cancel"],
                 sel: 0,
                 hits: Vec::new(),
             },
@@ -603,7 +578,7 @@ impl Default for Quit {
 
 impl Quit {
     pub fn draw(&mut self, f: &mut Frame, area: Rect) {
-        let r = centred(area, 38, 11);
+        let r = centred(area, 38, 9);
         f.render_widget(Clear, r);
         f.render_widget(frame_block(), r);
         let inner = Rect {
@@ -617,7 +592,7 @@ impl Quit {
                 .alignment(ratatui::layout::Alignment::Center)
         };
         f.render_widget(
-            centre("Are you sure you want to quit?", Style::default().fg(FG)),
+            centre("Quit mathbuddy?", Style::default().fg(FG)),
             Rect {
                 y: inner.y + 1,
                 height: 1,
@@ -634,17 +609,9 @@ impl Quit {
         );
         let hint = Style::default().fg(MOST_SUBTLE);
         f.render_widget(
-            centre("To quit without confirmation", hint),
+            centre("(Ctrl-C twice quits at once)", hint),
             Rect {
                 y: inner.y + 5,
-                height: 1,
-                ..inner
-            },
-        );
-        f.render_widget(
-            centre("press ctrl+c twice.", hint),
-            Rect {
-                y: inner.y + 6,
                 height: 1,
                 ..inner
             },
@@ -705,7 +672,7 @@ impl TextBox {
             height: r.height.saturating_sub(2),
         };
         f.render_widget(
-            Paragraph::new(gradient_title(&self.title, inner.width as usize)),
+            Paragraph::new(title_line(&self.title)),
             Rect { height: 1, ..inner },
         );
         let body = Rect {

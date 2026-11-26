@@ -283,6 +283,9 @@ Give the code as a fenced block they can /run themselves."
         cancel: Arc<AtomicBool>,
     ) -> Result<String> {
         self.runs.clear();
+        if server.model.is_empty() {
+            anyhow::bail!("no model chosen yet: F3 (or /model) picks one");
+        }
         self.history.push(json!({"role": "user", "content": text}));
         let r = self
             .answer(server, conn, &events, &mut confirm, &cancel)

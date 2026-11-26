@@ -284,3 +284,100 @@ async fn declined_run_is_reported_to_the_model() {
         .clone();
     assert!(tool["content"].as_str().unwrap().contains("declined"));
 }
+
+/// The llama.cpp path: OpenAI-style SSE from a llama-server router, with the
+/// thinking, the tool calls arriving in pieces, and the answer.
+#[tokio::test(flavor = "multi_thread")]
+async fn llamacpp_router_tool_loop() {
+    let k = python_kernel().await;
+    let mut fe = Frontend::new(&k.info).await;
+    fe.run("ys = [2, 4, 9]").await;
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let conn = Connection::Kernel(KernelWatch::connect(&k.cf, tx).await.unwrap());
+
+    let delta = |d: serde_json::Value| json!({"choices": [{"index": 0, "delta": d}]});
+    let fake = FakeOllama::start(
+        &["bonsai-27b", "other-model"],
+        vec![
+            // a call whose name and arguments come in three pieces
+            vec![
+                delta(json!({"reasoning_content": "Sum the list. "})),
+                delta(
+                    json!({"tool_calls": [{"index": 0, "id": "call_1", "type": "function",
+                    "function": {"name": "run_code", "arguments": ""}}]}),
+                ),
+                delta(
+                    json!({"tool_calls": [{"index": 0, "function": {"arguments": "{\"code\": \"t = sum(ys)"}}]}),
+                ),
+                delta(
+                    json!({"tool_calls": [{"index": 0, "function": {"arguments": "\\nprint(t)\"}"}}]}),
+                ),
+            ],
+            vec![
+                delta(json!({"content": "The total "})),
+                delta(json!({"content": "is 15."})),
+            ],
+        ],
+    );
+    let mut server = Server::llamacpp(&fake.host, false);
+    assert_eq!(
+        server.catalog().unwrap(),
+        vec![("bonsai-27b".into(), true), ("other-model".into(), false)]
+    );
+    assert_eq!(
+        server.find("bonsai-27b").unwrap().as_deref(),
+        Some("bonsai-27b")
+    );
+    server.model = "bonsai-27b".into();
+
+    let mut a = Assistant::default();
+    let (etx, mut erx) = mpsc::unbounded_channel();
+    let answer = a
+        .ask(
+            &server,
+            Some(&conn),
+            "what's the total of ys?",
+            etx,
+            Box::new(|_c: String| Box::pin(async { true })),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+        .unwrap();
+    assert_eq!(answer, "The total is 15.");
+    assert_eq!(a.runs, vec!["t = sum(ys)\nprint(t)".to_string()]);
+    assert!(conn.inspect("t").await.unwrap().contains("repr: 15"));
+    let mut thought = String::new();
+    while let Ok(ev) = erx.try_recv() {
+        if let Event::Thinking(t) = ev {
+            thought.push_str(&t);
+        }
+    }
+    assert_eq!(thought, "Sum the list. ");
+
+    let reqs = fake.requests.lock().unwrap();
+    assert_eq!(reqs.len(), 2);
+    let first = &reqs[0];
+    assert_eq!(first["model"], "bonsai-27b");
+    assert_eq!(first["stream"], true);
+    assert_eq!(first["chat_template_kwargs"]["enable_thinking"], false);
+    assert_eq!(first["tools"].as_array().unwrap().len(), 3);
+    for knob in ["temperature", "top_p", "top_k", "min_p"] {
+        assert!(first.get(knob).is_none(), "{knob} is the preset's business");
+    }
+    // the second request carries the call (arguments as JSON text) and its
+    // result tied to the call's id
+    let msgs = reqs[1]["messages"].as_array().unwrap();
+    let call = msgs
+        .iter()
+        .find(|m| m["role"] == "assistant" && m["tool_calls"].is_array())
+        .unwrap();
+    let tc = &call["tool_calls"][0];
+    assert_eq!(tc["id"], "call_1");
+    assert_eq!(tc["function"]["name"], "run_code");
+    let args: serde_json::Value =
+        serde_json::from_str(tc["function"]["arguments"].as_str().unwrap()).unwrap();
+    assert_eq!(args["code"], "t = sum(ys)\nprint(t)");
+    let result = msgs.iter().find(|m| m["role"] == "tool").unwrap();
+    assert_eq!(result["tool_call_id"], "call_1");
+    assert!(result["content"].as_str().unwrap().contains("15"));
+}
