@@ -11,7 +11,7 @@ use std::{
 
 use common::*;
 use mathbuddy::{
-    assistant::{Assistant, Event},
+    assistant::{Assistant, Confirm, Event},
     kernel::KernelWatch,
     llm::Server,
     rbridge::RBridge,
@@ -183,10 +183,10 @@ async fn assistant_tool_loop_runs_approved_code() {
     let (etx, mut erx) = mpsc::unbounded_channel();
     let asked = Arc::new(Mutex::new(Vec::new()));
     let seen = asked.clone();
-    let confirm = async move |code: String| {
+    let confirm: Confirm = Box::new(move |code: String| {
         seen.lock().unwrap().push(code);
-        true
-    };
+        Box::pin(async { true })
+    });
     let answer = a
         .ask(
             &server,
@@ -263,7 +263,7 @@ async fn declined_run_is_reported_to_the_model() {
             Some(&conn),
             "make z",
             etx,
-            async |_c: String| false,
+            Box::new(|_c: String| Box::pin(async { false })),
             Arc::new(AtomicBool::new(false)),
         )
         .await

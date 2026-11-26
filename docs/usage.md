@@ -1,7 +1,7 @@
 # Using mathbuddy
 
-mathbuddy is a chat in a terminal, next to the session you work in. You type
-questions in plain language; it answers in text. It sees what you run as you
+mathbuddy is a full-screen chat in a terminal, next to the session you work
+in. You type questions in plain language; it answers in text. It sees what you run as you
 run it, it can look at your variables, and it can run code in your session,
 but only after showing you the code and getting a yes.
 
@@ -36,9 +36,26 @@ Useful options (all of them: `mathbuddy --help`):
 | `-y` | run code without asking each time (be sure you want this) |
 | `--no-hints` | no automatic hint when something you run fails |
 
+## The screen
+
+The conversation fills the screen, your question goes in the box below it, and
+the bar at the bottom shows the model and the session, with four buttons:
+
+| key | button | |
+|---|---|---|
+| F1 | help | the keys and commands |
+| F2 | vars | a panel with your variables, kept up to date as you run cells; click one to look at it |
+| F3 | model | pick a model |
+| F4 | session | pick a session to attach to |
+
+Click the buttons or press the keys. The mouse wheel and PgUp/PgDn scroll the
+conversation; Up and Down bring back earlier questions; Alt-Enter starts a new
+line in the box. Ctrl-C stops an answer; with nothing going on, it asks
+whether to quit (Ctrl-C twice quits).
+
 ## Choosing the model
 
-`/model` opens a menu of every model mathbuddy can use, grouped by server,
+`/model` (or F3) opens a menu of every model mathbuddy can use, grouped by server,
 with the one in use ticked and the ones already in memory marked `loaded`.
 Type to filter, ↑/↓ to choose, Enter to switch, Esc to leave it as it is:
 
@@ -152,18 +169,18 @@ With several blocks, add a number: `/insert 2`.
 
 | | |
 |---|---|
-| `/sessions` | pick a session to attach to |
+| `/sessions` | pick a session to attach to (F4) |
 | `/attach [N or words]` | attach without the menu |
-| `/vars` | your variables |
+| `/vars` | your variables (F2 keeps them on screen) |
 | `/cells` | what mathbuddy has seen you run |
 | `/run`, `/insert`, `/console`, `/copy`, `/show` `[n]` | see above |
-| `/model` | pick a model on your servers |
+| `/model` | pick a model on your servers (F3) |
 | `/model N` or `/model name` | switch to that model |
 | `/hints on` or `/hints off` | automatic hints on errors |
 | `/clear` | forget the conversation |
 | `/quit` | quit (or Ctrl-D) |
 
-Ctrl-C stops an answer in progress. Alt-Enter types a newline without sending.
+Ctrl-C stops an answer in progress. Alt-Enter types a newline without sending. F1 shows all of this in mathbuddy.
 
 ## Asking once, from a script or another terminal
 
@@ -184,7 +201,7 @@ It prints the answer and exits. It won't run code this way unless you add `-y`.
 - **While your own code runs**, mathbuddy can't look at your variables; it
   waits until R or the kernel is free again.
 - **What it can do per session type:** looking at variables and running code
-  work in Python (jotter, Jupyter) and in R (RStudio, terminal R). For other
-  Jupyter kernels (Octave, Wolfram, IRkernel) it watches and gives code for you
-  to run.
+  work in Python (jotter, Jupyter), in Giac and in R (RStudio, terminal R). For
+  other Jupyter kernels (Octave, Wolfram, IRkernel) it watches and gives code
+  for you to run.
 - **Check the setup** any time with `mathbuddy doctor`.

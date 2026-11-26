@@ -27,8 +27,7 @@ after showing you the code and getting a yes.
 Set up once per machine (details and checks: [docs/setup.md](docs/setup.md)):
 
 ```sh
-git clone https://github.com/sandbranch/mathbuddy ~/code/mathbuddy
-cd ~/code/mathbuddy && uv tool install --editable .
+cargo install --git https://github.com/sandbranch/mathbuddy   # one binary, in ~/.cargo/bin
 ollama pull qwen3.5            # or qwen3.5:4b-q4_K_M on a 4 GB graphics card
 mathbuddy setup-r              # only if you use R or RStudio
 mathbuddy doctor               # checks everything, says how to fix what's missing
@@ -40,7 +39,8 @@ Then:
 - **jotter or another Jupyter frontend:** open your notebook as usual, then run
   `mathbuddy` in another terminal (or a tmux pane next to it). It finds the
   session by itself; `/sessions` picks another.
-- Type a question, press Enter. `/help` lists the commands.
+- Type a question, press Enter. F1 (or `/help`) lists the keys and commands;
+  F2 shows your variables, F3 picks a model, F4 a session. The mouse works too.
 
 How to use it, with examples: [docs/usage.md](docs/usage.md).
 What changed in each version: [CHANGELOG.md](CHANGELOG.md).
@@ -90,15 +90,17 @@ half of qwen3:4b is pushed off the GPU and prompt reading drops from about
   sessions'), so it knows what you've done before it arrived.
 * The kernel runs one thing at a time: while a long cell runs, the helper's
   questions about variables wait (and time out after 20 s).
-* Variable inspection and `run_code` work for Python kernels and for R via
-  the bridge. Watching works for every Jupyter kernel (Octave, IRkernel R,
-  Wolfram); for those it answers from what it has seen and gives code for
-  you to run.
+* Variable inspection and `run_code` work for Python kernels, Giac kernels
+  (giac-kernel evaluates `user_expressions`; `VARS()` lists the variables) and
+  for R via the bridge. Watching works for every Jupyter kernel (Octave,
+  IRkernel R, Wolfram); for those it answers from what it has seen and gives
+  code for you to run.
 
 ## R bridge
 
-R has no kernel to attach to, so `mathbuddy/r/bridge.R` runs inside each R
-session (loaded from `~/.Rprofile` by `mathbuddy setup-r`). It records each
+R has no kernel to attach to, so a bridge runs inside each R session. Its
+code (`r/bridge.R`) is built into the binary; `mathbuddy setup-r` writes it
+to `~/.local/share/mathbuddy/bridge.R` and loads it from `~/.Rprofile`. It records each
 top-level command (task callback), each uncaught error (a global calling
 handler, registered from a `later` callback because R refuses it while any
 handler is on the stack), and each new plot page (the `plot.new` and
@@ -109,14 +111,19 @@ removed when R exits). In RStudio, `/insert` and `/console` use `rstudioapi`.
 
 ## Development
 
+mathbuddy is one Rust program. It talks to kernels with
+`jupyter-zmq-client`, as jotter does, and to the model servers over plain HTTP.
+
 ```sh
-python3 -m pytest tests     # real ipykernel and real R, no model or GPU needed
+cargo test                  # real ipykernel, giac-kernel and R; a fake Ollama, no model or GPU
+GIAC_KERNEL=/path/to/giac-kernel cargo test   # use a giac-kernel other than /usr/bin's
+cargo install --path .      # install this checkout
 ```
 
-Versions: the number lives in `mathbuddy/__init__.py` (pyproject reads it
-from there). For a release: bump it, add a section to `CHANGELOG.md`, commit,
-`git tag -a vX.Y.Z`, push the tag, and make a GitHub release from it.
-`mathbuddy --version` also shows the commit when installed from a checkout.
+Versions: the number lives in `Cargo.toml`. For a release: bump it, add a
+section to `CHANGELOG.md`, commit, `git tag -a vX.Y.Z`, push the tag, and make
+a GitHub release from it. `mathbuddy --version` also shows the commit it was
+built from.
 
 ## License
 

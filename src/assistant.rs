@@ -3,6 +3,7 @@
 use std::sync::{Arc, atomic::AtomicBool};
 
 use anyhow::Result;
+use futures::future::BoxFuture;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
@@ -121,6 +122,9 @@ pub fn code_blocks(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// Asked before every run_code: the code, then true to run it.
+pub type Confirm = Box<dyn FnMut(String) -> BoxFuture<'static, bool> + Send>;
+
 /// What the answer loop reports while it works.
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -194,7 +198,7 @@ impl Assistant {
         conn: Option<&Connection>,
         name: &str,
         args: &Value,
-        confirm: &mut impl AsyncFnMut(String) -> bool,
+        confirm: &mut Confirm,
     ) -> String {
         let Some(c) = conn else {
             return "no session attached".into();
@@ -275,7 +279,7 @@ Give the code as a fenced block they can /run themselves."
         conn: Option<&Connection>,
         text: &str,
         events: mpsc::UnboundedSender<Event>,
-        mut confirm: impl AsyncFnMut(String) -> bool,
+        mut confirm: Confirm,
         cancel: Arc<AtomicBool>,
     ) -> Result<String> {
         self.runs.clear();
@@ -302,7 +306,7 @@ Give the code as a fenced block they can /run themselves."
         server: &Server,
         conn: Option<&Connection>,
         events: &mpsc::UnboundedSender<Event>,
-        confirm: &mut impl AsyncFnMut(String) -> bool,
+        confirm: &mut Confirm,
         cancel: &Arc<AtomicBool>,
     ) -> Result<String> {
         let tools = conn.filter(|c| c.can_inspect()).map(|_| tools());

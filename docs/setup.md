@@ -1,14 +1,13 @@
 # Setting up mathbuddy on a machine
 
-About ten minutes on a Linux machine that already has Python and git. Each
-step says how to check it worked. At the end, `mathbuddy doctor` checks the
+About ten minutes on a Linux machine. Each step says how to check it worked. At the end, `mathbuddy doctor` checks the
 whole setup and tells you what, if anything, is missing.
 
 What you need:
 
-- Linux, Python 3.10 or newer, git.
-- [uv](https://docs.astral.sh/uv/), which installs mathbuddy in its own
-  environment. Check with `uv --version`.
+- Linux.
+- Rust's `cargo`, to build mathbuddy (from your distribution, or
+  [rustup](https://rustup.rs)). Check with `cargo --version`.
 - [Ollama](https://ollama.com/download), which runs the model. Check with
   `ollama --version`.
 - Optional: R (for R and RStudio sessions), [jotter](https://samox73.github.io/jotter/)
@@ -17,17 +16,16 @@ What you need:
 ## 1. Install mathbuddy
 
 ```sh
-git clone https://github.com/sandbranch/mathbuddy ~/code/mathbuddy
-cd ~/code/mathbuddy
-uv tool install --editable .
+cargo install --git https://github.com/sandbranch/mathbuddy
 ```
 
-Check: `mathbuddy --version` prints the version and the commit, for example
-`mathbuddy 0.2.0 (a1b2c3d)`. If the command isn't found, `~/.local/bin` is
-not on your PATH; uv prints how to fix that (`uv tool update-shell`).
+That builds one binary, `~/.cargo/bin/mathbuddy`, with everything in it (the
+R bridge too). Check: `mathbuddy --version` prints the version and the
+commit, for example `mathbuddy 0.3.0 (a1b2c3d)`. If the command isn't found,
+`~/.cargo/bin` is not on your PATH.
 
-`--editable` means the installed command runs the code in `~/code/mathbuddy`
-directly, so updating is a `git pull` (see [Updating](#updating)).
+From a checkout instead: `git clone https://github.com/sandbranch/mathbuddy`,
+then `cargo install --path .` in it.
 
 ## 2. Give it a model
 
@@ -87,7 +85,7 @@ mathbuddy setup-r
 This adds one line to `~/.Rprofile` (it never replaces what is there).
 Check: start a new R session; `mathbuddy --list` should show it. For an R
 session that was already running, paste this into its console once:
-`source("~/code/mathbuddy/mathbuddy/r/bridge.R")`.
+`source("~/.local/share/mathbuddy/bridge.R")`.
 
 A project's own `.Rprofile` replaces `~/.Rprofile` for that project. If you
 use one, add the line there too (`mathbuddy setup-r --print` prints it).
@@ -123,18 +121,18 @@ fixes it. It ends with `all good`, or with how many things need fixing.
 ## Updating
 
 ```sh
-cd ~/code/mathbuddy && git pull
+cargo install --git https://github.com/sandbranch/mathbuddy --force
 ```
 
-The next `mathbuddy` you start runs the new code. If the release notes in
-[CHANGELOG.md](../CHANGELOG.md) say the dependencies changed, also run
-`uv tool install --editable --force .` in that folder. `mathbuddy --version`
-shows which version and commit a machine is on.
+The next `mathbuddy` you start is the new version, and it updates the R
+bridge file; R sessions load it when they start. `mathbuddy --version` shows
+which version and commit a machine is on.
 
 ## Removing it
 
 ```sh
-uv tool uninstall mathbuddy
+cargo uninstall mathbuddy
+rm -r ~/.local/share/mathbuddy
 ```
 
 and delete the line ending in `# mathbuddy bridge` from `~/.Rprofile`.
@@ -142,8 +140,8 @@ and delete the line ending in `# mathbuddy bridge` from `~/.Rprofile`.
 ## When something doesn't work
 
 - **`command not found: mathbuddy` over SSH** (`ssh host 'mathbuddy ...'`):
-  non-interactive shells often don't read the file that puts `~/.local/bin`
-  on the PATH. Use the full path: `ssh host '~/.local/bin/mathbuddy doctor'`.
+  non-interactive shells often don't read the file that puts `~/.cargo/bin`
+  on the PATH. Use the full path: `ssh host '~/.cargo/bin/mathbuddy doctor'`.
 - **An R or RStudio session doesn't show up:** run `mathbuddy doctor`. Usually
   the bridge line is missing (`mathbuddy setup-r`), the session was started
   before setup (paste the `source(...)` line), or the project has its own

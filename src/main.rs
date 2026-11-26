@@ -11,7 +11,7 @@ use std::{
 use clap::Parser;
 
 use mathbuddy::{
-    assistant::Event,
+    assistant::{Confirm, Event},
     core::{Core, Settings},
     setup,
 };
@@ -103,7 +103,7 @@ async fn main() {
     let args = Args::parse();
     // R sessions started from now on load this version's bridge
     let _ = setup::ensure_bridge_file();
-    let (mut core, _done_rx) = Core::new(args.settings());
+    let (mut core, done_rx) = Core::new(args.settings());
     if args.list {
         let found = core.find_sessions(true).await;
         if found.is_empty() {
@@ -119,10 +119,10 @@ async fn main() {
     if !args.question.is_empty() {
         std::process::exit(once(&mut core, &args.question.join(" "), args.run, args.think).await);
     }
-    eprintln!(
-        "the full-screen interface is not built yet; ask once with: mathbuddy \"your question\""
-    );
-    std::process::exit(2);
+    if let Err(e) = mathbuddy::ui::run(core, done_rx, args.think).await {
+        eprintln!("mathbuddy: {e}");
+        std::process::exit(1);
+    }
 }
 
 fn flush_notes(core: &mut Core) {
@@ -147,21 +147,25 @@ async fn once(core: &mut Core, question: &str, run_last: bool, show_thinking: bo
         ..Default::default()
     };
     let result = {
-        let confirm = async |code: String| -> bool {
-            println!("\n{BOLD}mathbuddy wants to run this in your session:{RESET}");
-            for l in code.lines() {
-                println!("  │ {l}");
-            }
-            if yes {
-                println!("{DIM}(approved: --yes){RESET}");
-            } else {
-                println!("{DIM}(declined: pass --yes to allow runs from the command line){RESET}");
-            }
-            yes
-        };
+        let confirm: Confirm = Box::new(move |code: String| {
+            Box::pin(async move {
+                println!("\n{BOLD}mathbuddy wants to run this in your session:{RESET}");
+                for l in code.lines() {
+                    println!("  │ {l}");
+                }
+                if yes {
+                    println!("{DIM}(approved: --yes){RESET}");
+                } else {
+                    println!(
+                        "{DIM}(declined: pass --yes to allow runs from the command line){RESET}"
+                    );
+                }
+                yes
+            })
+        });
         let ask = core
             .assistant
-            .ask(&server, core.conn.as_ref(), question, tx, confirm, cancel);
+            .ask(&server, core.conn.as_deref(), question, tx, confirm, cancel);
         tokio::pin!(ask);
         loop {
             tokio::select! {

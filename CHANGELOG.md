@@ -1,6 +1,23 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 (unreleased)
+
+Upgrading: mathbuddy is now one Rust program. Install it with
+`cargo install --git https://github.com/sandbranch/mathbuddy`, run
+`mathbuddy setup-r` once (it points `~/.Rprofile` at the new bridge file), and
+remove the old Python install (`uv tool uninstall mathbuddy`).
+
+- **One program, written in Rust.** No Python environment to install or keep
+  working; the R bridge is built in. It connects to kernels the way jotter
+  does. Same prompt, tools and approval rule as before.
+- **Full-screen.** The conversation, your question box, a bar with buttons
+  (F1 help, F2 variables, F3 model, F4 session), a variables panel that
+  stays up to date, pop-ups for picking and for approving runs. Mouse and
+  keyboard. While it answers, you can scroll, and Ctrl-C stops it.
+- **Giac.** mathbuddy looks at Giac variables too (giac-kernel evaluates
+  `user_expressions` since its commit 9d7fff4), and knows Giac's syntax.
+- **A kernel started on its own** (not by a frontend) is named by its folder,
+  and is no longer taken for "the session you started mathbuddy from".
 
 - **llama.cpp models.** mathbuddy also talks to llama.cpp's `llama-server`,
   a single model or a router with several presets: `--llamacpp ADDRESS:PORT`

@@ -353,6 +353,21 @@ fn language_of(cmd: &[String], cf: &Path) -> String {
 }
 
 /// (frontend name, label, frontend pid) for the process that started a kernel.
+/// Processes that are everyone's ancestor (the service manager, init, the
+/// tmux server): a kernel they started has no frontend of its own, and
+/// mathbuddy wasn't "started from inside" them in any useful sense.
+fn is_system(pid: u32) -> bool {
+    let exe = cmdline(pid)
+        .first()
+        .and_then(|c| {
+            Path::new(c)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+        })
+        .unwrap_or_default();
+    pid == 1 || exe == "systemd" || exe == "init" || exe.starts_with("tmux")
+}
+
 fn frontend_of(pid: Option<u32>) -> (String, String, Option<u32>) {
     let Some(pid) = pid else {
         return ("Jupyter".into(), "?".into(), None);
@@ -429,7 +444,19 @@ pub async fn discover(patterns: Option<&[String]>, probe_r: bool) -> Vec<Found> 
             }
             let pids = pids.get_or_insert_with(kernel_pids);
             let kpid = pids.get(&real).copied();
-            let (front, label, fpid) = frontend_of(kpid.and_then(ppid));
+            let parent = kpid.and_then(ppid).filter(|p| !is_system(*p));
+            let (mut front, mut label, fpid) = frontend_of(parent);
+            if fpid.is_none()
+                && let Some(k) = kpid
+            {
+                // a kernel on its own (jupyter kernel, a service): name it by its folder
+                front = "kernel".into();
+                let dir = cwd(k);
+                label = Path::new(&dir)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or("?".into());
+            }
             let cmd = kpid.map(cmdline).unwrap_or_default();
             let started = mtime
                 .duration_since(UNIX_EPOCH)
@@ -443,7 +470,7 @@ pub async fn discover(patterns: Option<&[String]>, probe_r: bool) -> Vec<Found> 
                 label,
                 started,
                 pid: fpid,
-                cwd: fpid.map(cwd).unwrap_or_default(),
+                cwd: fpid.or(kpid).map(cwd).unwrap_or_default(),
                 score: 0,
                 reason: String::new(),
             });

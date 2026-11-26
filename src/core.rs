@@ -2,7 +2,7 @@
 //! the one-shot command line. Everything it has to say goes into `notes`,
 //! which the front end shows however it shows things.
 
-use std::{collections::HashSet, path::PathBuf};
+use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
 use tokio::sync::mpsc;
 
@@ -33,7 +33,8 @@ pub struct Core {
     pub settings: Settings,
     pub models: Models,
     pub assistant: Assistant,
-    pub conn: Option<Connection>,
+    /// Shared, so an answer can use it from its own task while the screen draws.
+    pub conn: Option<Arc<Connection>>,
     /// The session attached to, as listed (None with -f).
     pub current: Option<Found>,
     /// The last list of sessions shown, for /attach N.
@@ -254,7 +255,7 @@ impl Core {
                             .map(|n| n.to_string_lossy().into_owned())
                             .unwrap_or_default();
                         self.say(format!("attached: {} kernel, {name}", k.kernel_name));
-                        self.conn = Some(Connection::Kernel(k));
+                        self.conn = Some(Arc::new(Connection::Kernel(k)));
                         self.current = None;
                     }
                     Err(e) => self.say(format!("(could not attach to {}: {e})", cf.display())),
@@ -309,7 +310,7 @@ impl Core {
                     String::new()
                 };
                 self.say(format!("attached: {}{why}{earlier}", s.title()));
-                self.conn = Some(c);
+                self.conn = Some(Arc::new(c));
                 self.current = Some(s.clone());
                 true
             }
