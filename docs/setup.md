@@ -20,7 +20,6 @@ What you need:
 git clone https://github.com/sandbranch/mathbuddy ~/code/mathbuddy
 cd ~/code/mathbuddy
 uv tool install --editable .
-ln -sf ~/code/mathbuddy/bin/mathbuddy-split ~/.local/bin/mathbuddy-split
 ```
 
 Check: `mathbuddy --version` prints the version and the commit, for example
@@ -103,8 +102,11 @@ environment.
 ## 4. Optional extras
 
 - **jotter**, for Jupyter notebooks in the terminal: mathbuddy finds jotter's
-  kernels by itself. `mathbuddy-split notes.ipynb` opens both side by side
-  in tmux.
+  kernels by itself. `mathbuddy notes.ipynb` opens both side by side.
+- **tmux**: mathbuddy starts inside tmux by itself (when you start it outside
+  tmux), so `/split` and `mathbuddy notes.ipynb` can open panes next to it.
+  Without tmux it runs as it is, without those two. `--no-tmux` (or
+  `MATHBUDDY_NO_TMUX=1`) turns this off.
 - **amux**: to run mathbuddy as an amux agent, add it to `~/.amux/config.json`:
 
   ```json
@@ -136,7 +138,6 @@ shows which version and commit a machine is on.
 
 ```sh
 uv tool uninstall mathbuddy
-rm ~/.local/bin/mathbuddy-split
 ```
 
 and delete the line ending in `# mathbuddy bridge` from `~/.Rprofile`.

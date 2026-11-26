@@ -16,6 +16,12 @@
 - **`/split`** starts jotter (with a kernel you pick) or R in a tmux pane next
   to mathbuddy and attaches to it. `/split notes.ipynb`, `/split giac` and
   `/split r` skip the menus.
+- **One command.** `mathbuddy notes.ipynb` replaces `mathbuddy-split`
+  (removed; delete your `~/.local/bin/mathbuddy-split` link). Started outside
+  tmux, mathbuddy now moves itself into a new tmux session so `/split` works;
+  `--no-tmux` or `MATHBUDDY_NO_TMUX=1` keeps it where it is.
+- **Ctrl-C at the prompt** opens crush's quit dialog (Yep! / Nope); Ctrl-C
+  twice quits. Nope brings back what you had typed.
 - `-m` and `MATHBUDDY_MODEL` find models on either server (router aliases
   too), and `mathbuddy doctor` checks the llama.cpp server when one is set.
 

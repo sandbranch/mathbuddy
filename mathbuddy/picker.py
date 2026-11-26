@@ -204,15 +204,94 @@ def pick(title: str, items: list[Item], placeholder: str = "Type to filter", sta
             state["query"] += ch
             state["sel"] = 0
 
-    from prompt_toolkit.output.color_depth import ColorDepth
-
-    depth = ColorDepth.TRUE_COLOR if os.environ.get("COLORTERM") in ("truecolor", "24bit") else None
     app = Application(layout=Layout(Window(FormattedTextControl(render, show_cursor=False), dont_extend_height=True)),
                       key_bindings=kb, full_screen=False, erase_when_done=True, mouse_support=False,
-                      color_depth=depth)
+                      color_depth=_color_depth())
     return app.run()
 
 
 def ask_yes_no(title: str, yes: str, no: str) -> bool:
     """A two-item picker for a question; Esc counts as no."""
     return bool(pick(title, [Item(yes, True), Item(no, False)], placeholder="Choose", start=1))
+
+
+def _color_depth():
+    from prompt_toolkit.output.color_depth import ColorDepth
+
+    return ColorDepth.TRUE_COLOR if os.environ.get("COLORTERM") in ("truecolor", "24bit") else None
+
+
+BUTTON_ON, BUTTON_OFF = "#FF60FF", RULE  # crush: Dolly for the chosen button, Char for the other
+
+
+def confirm_quit() -> bool:
+    """crush's quit dialog: Yep! / Nope, Yep! chosen. Ctrl-C again (or y) quits."""
+    from prompt_toolkit.application import Application
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.layout import Layout, Window
+    from prompt_toolkit.layout.controls import FormattedTextControl
+
+    question = "Are you sure you want to quit?"
+    hints = ["To quit without confirmation", "press ctrl+c twice."]
+    state = {"no": False}
+
+    def render():
+        buttons = [("Yep!", not state["no"]), ("Nope", state["no"])]
+        bw = sum(len(t) + 6 for t, _ in buttons) + 1  # padding 3 each side, one space between
+        inner = max(len(question), bw, *(len(h) for h in hints)) + 4  # padding 2 each side
+        border = f"fg:{_hex(PRIMARY)}"
+        frags: list[tuple[str, str]] = [(border, "╭" + "─" * inner + "╮\n")]
+
+        def centred(parts: list[tuple[str, str]], width: int):
+            left = (inner - width + 1) // 2
+            frags.append((border, "│"))
+            frags.append(("", " " * left))
+            frags.extend(parts)
+            frags.append(("", " " * (inner - width - left)))
+            frags.append((border, "│\n"))
+
+        centred([], 0)
+        centred([(f"fg:{FG}", question)], len(question))
+        centred([], 0)
+        parts = []
+        for i, (text, on) in enumerate(buttons):
+            if i:
+                parts.append(("", " "))
+            parts.append((f"bg:{BUTTON_ON} fg:{ON_PRIMARY}" if on else f"bg:{BUTTON_OFF} fg:{FG}", f"   {text}   "))
+        centred(parts, bw)
+        centred([], 0)
+        for h in hints:
+            centred([(f"fg:{MOST_SUBTLE}", h)], len(h))
+        centred([], 0)
+        frags.append((border, "╰" + "─" * inner + "╯"))
+        return frags
+
+    kb = KeyBindings()
+
+    @kb.add("left")
+    @kb.add("right")
+    @kb.add("tab")
+    @kb.add("s-tab")
+    def _(e):
+        state["no"] = not state["no"]
+
+    @kb.add("enter")
+    @kb.add(" ")
+    def _(e):
+        e.app.exit(result=not state["no"])
+
+    @kb.add("y")
+    @kb.add("Y")
+    @kb.add("c-c")
+    def _(e):
+        e.app.exit(result=True)
+
+    @kb.add("n")
+    @kb.add("N")
+    @kb.add("escape", eager=True)
+    def _(e):
+        e.app.exit(result=False)
+
+    app = Application(layout=Layout(Window(FormattedTextControl(render, show_cursor=False), dont_extend_height=True)),
+                      key_bindings=kb, full_screen=False, erase_when_done=True, color_depth=_color_depth())
+    return bool(app.run())

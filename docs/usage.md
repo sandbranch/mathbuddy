@@ -19,7 +19,7 @@ attached: R · RStudio · assay-project (you started mathbuddy from inside this 
 **With jotter** (Jupyter notebooks in the terminal):
 
 ```sh
-mathbuddy-split notes.ipynb        # jotter left, mathbuddy right, in tmux
+mathbuddy notes.ipynb        # jotter left, mathbuddy right, in tmux
 ```
 
 **Anywhere else:** `mathbuddy` attaches to the best session it can find.
@@ -78,8 +78,7 @@ uses the loaded model (a benchmark, another program) would be interrupted.
 
 ## Starting a session from mathbuddy: /split
 
-Inside tmux (for example when you started with `mathbuddy-split`), `/split`
-opens a menu: jotter or R, and for jotter, which kernel (Python, R, Giac,
+`/split` opens a menu: jotter or R, and for jotter, which kernel (Python, R, Giac,
 Octave, Wolfram, whatever Jupyter has installed). It starts it in a pane to
 the left of mathbuddy and attaches to it as soon as it's up. A second
 `/split` goes under the first, so mathbuddy keeps its width.

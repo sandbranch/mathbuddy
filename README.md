@@ -37,7 +37,8 @@ mathbuddy doctor               # checks everything, says how to fix what's missi
 Then:
 
 - **RStudio:** open the Terminal tab and run `mathbuddy`.
-- **jotter:** `mathbuddy-split notes.ipynb`.
+- **jotter:** `mathbuddy notes.ipynb` opens the notebook in jotter next to mathbuddy.
+- **Anything else:** `mathbuddy`, then `/split` to start jotter (any kernel) or R next to it.
 - Type a question, press Enter. `/help` lists the commands.
 
 How to use it, with examples: [docs/usage.md](docs/usage.md).
