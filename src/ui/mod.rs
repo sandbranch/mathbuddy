@@ -37,7 +37,7 @@ use ratatui::{
 };
 use text::*;
 use tokio::sync::{mpsc, oneshot};
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
     assistant::{Assistant, Confirm, Event},
@@ -542,28 +542,43 @@ impl Ui {
             self.core.session_label(),
             if self.core.hints { "on" } else { "off" }
         );
-        let st = chosen();
-        f.render_widget(
-            Paragraph::new(Span::styled(
-                format!("{left:<w$}", w = area.width as usize),
-                st,
-            )),
-            area,
-        );
-        self.buttons.clear();
-        let labels = [
+        // the buttons always show; the status text gives way to them
+        let full = [
             (" F1 help ", Button::Help),
             (" F2 vars ", Button::Vars),
             (" F3 model ", Button::Model),
             (" F4 session ", Button::Session),
         ];
-        let total: u16 = labels.iter().map(|(l, _)| l.width() as u16 + 1).sum();
-        if area.width < total + left.width() as u16 {
-            return;
-        }
+        let short = [
+            (" F1 ", Button::Help),
+            (" F2 ", Button::Vars),
+            (" F3 ", Button::Model),
+            (" F4 ", Button::Session),
+        ];
+        let width =
+            |ls: &[(&str, Button)]| -> u16 { ls.iter().map(|(l, _)| l.width() as u16 + 1).sum() };
+        let labels = if area.width >= width(&full) + 20 {
+            full
+        } else {
+            short
+        };
+        let total = width(&labels).min(area.width);
+        let room = (area.width - total) as usize;
+        let text = fit(&left, room);
+        f.render_widget(
+            Paragraph::new(Span::styled(
+                format!("{text:<w$}", w = area.width as usize),
+                chosen(),
+            )),
+            area,
+        );
+        self.buttons.clear();
         let mut x = area.right() - total;
         for (l, b) in labels {
             let w = l.width() as u16;
+            if x + w > area.right() {
+                break;
+            }
             let on = matches!(b, Button::Vars) && self.vars_open;
             let bst = if on {
                 Style::default().fg(PRIMARY).add_modifier(Modifier::BOLD)
@@ -1244,4 +1259,22 @@ impl Ui {
             other => self.note(format!("(unknown command /{other}; /help lists them)")),
         }
     }
+}
+
+/// `s` cut to `max` columns, ending in an ellipsis when cut.
+fn fit(s: &str, max: usize) -> String {
+    if s.width() <= max {
+        return s.to_string();
+    }
+    let mut out = String::new();
+    for c in s.chars() {
+        if out.width() + c.width().unwrap_or(0) + 2 > max {
+            break;
+        }
+        out.push(c);
+    }
+    if max >= 2 {
+        out.push_str("… ");
+    }
+    out
 }
