@@ -10,6 +10,12 @@
   numbered, with the one in use and the loaded ones marked; `/model N` or
   `/model name` switches. Before picking a llama.cpp model that would make
   the router unload another one, mathbuddy asks.
+- **Menus.** `/model`, `/sessions` and the question before loading a model
+  open pop-up menus in the style of crush: type to filter, arrows to choose.
+  Outside an interactive terminal they print numbered lists as before.
+- **`/split`** starts jotter (with a kernel you pick) or R in a tmux pane next
+  to mathbuddy and attaches to it. `/split notes.ipynb`, `/split giac` and
+  `/split r` skip the menus.
 - `-m` and `MATHBUDDY_MODEL` find models on either server (router aliases
   too), and `mathbuddy doctor` checks the llama.cpp server when one is set.
 

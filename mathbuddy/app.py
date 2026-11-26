@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import base64
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -15,6 +16,7 @@ from . import __version__
 from .assistant import Assistant, code_blocks
 from .kernel import KernelWatch, kernel_alive
 from .llm import LlamaCpp, Models, Ollama
+from . import picker
 from .rbridge import BRIDGE_R
 from .sessions import Session, discover, pick, rank
 
@@ -30,12 +32,15 @@ session it shows the code and asks: y(es), n(o), or a(lways for this session).
   /copy [n]      copy code block n to the clipboard, to paste into a jotter cell
   /vars          list the session's variables
   /cells         show the cells mathbuddy has seen
-  /sessions      list the sessions I can attach to, best suggestion first
+  /sessions      pick a session to attach to (a list outside a terminal)
+  /split [what]  start jotter or R next to me in tmux and attach to it; with no
+                argument, menus for what to start and which kernel. Also:
+                /split notes.ipynb, /split r, /split giac (a kernel name)
   /attach [N|words]  attach to session N from that list, or one matching words
                  (rstudio, jotter, a notebook or project name); no argument: my suggestion
   /insert [n]    RStudio: put code block n into your open script at the cursor
   /console [n]   RStudio: send code block n to the console, as if you typed it
-  /model         list the models on your Ollama and llama.cpp servers, numbered
+  /model         pick a model on your Ollama and llama.cpp servers
   /model N|name  switch to model N from that list, or by name
   /hints on|off  one-line hints when a cell raises an error
   /clear         forget the conversation (not the cells)
@@ -81,6 +86,7 @@ class App:
             servers.append(LlamaCpp(args.llamacpp, think=args.think))
         self.llm = Models(servers)
         self.model_listing: list[tuple[object, str, bool]] = []
+        self.split_panes: list[str] = []  # tmux panes /split started, newest last
         self.assistant = Assistant(self.llm, confirm=self.confirm_run)
         self.always_run = args.yes
         self.interactive_mode = False
@@ -254,9 +260,19 @@ class App:
         elif cmd == "sessions":
             self.listing = self.find_sessions()
             self.known |= {s.path for s in self.listing}
+            if self.listing and self.use_picker():
+                cur = self.watch.cf if self.watch else None
+                s = picker.pick("Attach to a session", [
+                    picker.Item(s.title(), s, s.reason if s.score else "", s.language, s.path == cur)
+                    for s in self.listing], placeholder="Type to filter: rstudio, jotter, a notebook")
+                if s is not None:
+                    self._attach_session(s)
+                return True
             self.print_sessions(self.listing)
             if self.listing:
                 self.out("(/attach N, or /attach with words like: rstudio, jotter, demo.ipynb)")
+        elif cmd == "split":
+            self.split(arg.strip())
         elif cmd == "attach":
             if arg.isdigit() and self.listing:  # numbers refer to the last list shown
                 i = int(arg) - 1
@@ -279,6 +295,8 @@ class App:
         elif cmd in ("model", "models"):
             if arg:
                 self.switch_model(arg)
+            elif self.use_picker():
+                self.pick_model()
             else:
                 self.print_models()
         elif cmd == "hints":
@@ -349,9 +367,24 @@ class App:
                  + ("; a llama.cpp model that isn't loaded gets loaded when you ask something" if
                     any(s.kind == "llama.cpp" for s in self.llm.servers) else "") + ")")
 
-    def switch_model(self, arg: str):
-        hit = None
-        if arg.isdigit() and self.model_listing:  # numbers refer to the last list shown
+    def use_picker(self) -> bool:
+        return self.interactive_mode and picker.can_pick()
+
+    def pick_model(self):
+        items = []
+        for server, models, err in self.llm.catalog():
+            group = f"{server.kind} · {server.base.split('://', 1)[-1]}"
+            if models is None:
+                items.append(picker.Item("not reachable", None, err[:40], group))
+            for name, loaded in models or []:
+                cur = server is self.llm.server and name == self.llm.model
+                items.append(picker.Item(name, (server, name), "loaded" if loaded else "", group, cur))
+        hit = picker.pick("Switch model", items, placeholder="Type to filter models")
+        if hit is not None:
+            self.switch_model(hit[1], hit=hit)
+
+    def switch_model(self, arg: str, hit=None):
+        if hit is None and arg.isdigit() and self.model_listing:  # numbers refer to the last list shown
             i = int(arg) - 1
             if 0 <= i < len(self.model_listing):
                 server, name, _ = self.model_listing[i]
@@ -388,6 +421,9 @@ class App:
                  f"may unload {', '.join(others)} to make room, interrupting anything using it.)")
         if not ask or not self.interactive_mode:
             return True  # named on the command line: the user asked for exactly this
+        if picker.can_pick():
+            return picker.ask_yes_no(f"Load {name}?", f"Yes, switch to {name}",
+                                     f"No, stay with {self.llm.model}")
         from prompt_toolkit import prompt
 
         try:
@@ -395,6 +431,103 @@ class App:
         except (KeyboardInterrupt, EOFError):
             return False
         return a in ("y", "yes")
+
+    # -- starting a session next to mathbuddy -----------------------------------
+
+    def split(self, arg: str):
+        """Start jotter or R in a tmux pane left of mathbuddy, then attach to it."""
+        if not os.environ.get("TMUX"):
+            self.out("(/split needs tmux: start with `mathbuddy-split`, or run mathbuddy inside tmux)")
+            return
+        kernels = kernel_specs()
+        what, kernel, notebook = None, None, None
+        if arg.lower() == "r":
+            what = "r"
+        elif arg.endswith((".ipynb", ".py")):
+            what, notebook = "jotter", arg
+        elif arg in kernels:
+            what, kernel = "jotter", arg
+        elif arg:
+            self.out(f"(/split takes r, a notebook (.ipynb or .py), or a kernel: {', '.join(kernels)})")
+            return
+        if what is None:
+            options = []
+            if shutil.which("jotter"):
+                options.append(picker.Item("jotter", "jotter", "a notebook: Python, R, Giac, Octave..."))
+            if shutil.which("R"):
+                options.append(picker.Item("R", "r", "R in the terminal"))
+            if not options:
+                self.out("(neither jotter nor R is installed; docs/setup.md says how to get jotter)")
+                return
+            if not self.use_picker():
+                self.out("(use /split r, /split notes.ipynb or /split KERNEL)")
+                return
+            what = picker.pick("Start a session", options, placeholder="Type to filter")
+            if what is None:
+                return
+        if what == "jotter" and notebook is None and kernel is None:
+            if not shutil.which("jotter"):
+                self.out("(jotter isn't installed; docs/setup.md says how to get it)")
+                return
+            items = [picker.Item(spec["display_name"], name,
+                                 "full help" if spec["language"] == "python" else "watches, suggests code",
+                                 current=name == "python3")
+                     for name, spec in kernels.items()]
+            kernel = picker.pick("Kernel", items, placeholder="Type to filter kernels") if self.use_picker() else "python3"
+            if kernel is None:
+                return
+        if what == "r":
+            if not shutil.which("R"):
+                self.out("(R isn't installed)")
+                return
+            try:
+                with open(rprofile_path()) as fh:
+                    ready = RPROFILE_MARK in fh.read()
+            except OSError:
+                ready = False
+            if not ready:
+                self.out("(R won't show up here until the bridge is set up: run `mathbuddy setup-r` once)")
+            cmd = [shutil.which("R")]
+        else:
+            if not shutil.which("jotter"):
+                self.out("(jotter isn't installed; docs/setup.md says how to get it)")
+                return
+            cmd = [shutil.which("jotter")] + (["--kernel", kernel] if kernel else []) + ([notebook] if notebook else [])
+        before = {s.path for s in self.find_sessions(probe_r=False)} | self.known
+        width = os.environ.get("MATHBUDDY_WIDTH", "38%").rstrip("%")
+        other = f"{100 - int(width)}%" if width.isdigit() else "62%"
+        try:
+            alive = [p for p in self.split_panes if tmux_pane_exists(p)]
+            if alive:  # stack under the last one, so mathbuddy keeps its width
+                where = ["-v", "-t", alive[-1]]
+            else:  # left of mathbuddy, like mathbuddy-split
+                where = ["-h", "-b", "-l", other] + (["-t", os.environ["TMUX_PANE"]] if os.environ.get("TMUX_PANE") else [])
+            new_pane = subprocess.run(["tmux", "split-window", *where, "-c", os.getcwd(),
+                                       "-P", "-F", "#{pane_id}", " ".join(shlex.quote(c) for c in cmd)],
+                                      check=True, capture_output=True, text=True, timeout=10).stdout.strip()
+            self.split_panes = alive + [new_pane]
+        except Exception as e:
+            self.out(f"(could not split the tmux window: {getattr(e, 'stderr', '') or e})")
+            return
+        shown = " ".join([os.path.basename(cmd[0])] + cmd[1:])
+        self.out(f"(started {shown} {'below the last one' if len(self.split_panes) > 1 else 'on the left'}; "
+                 "I'll attach when it's up)")
+        threading.Thread(target=self._attach_new, args=(before, "r-bridge" if what == "r" else "jupyter",
+                                                        new_pane, shown), daemon=True).start()
+
+    def _attach_new(self, before: set[str], kind: str, pane: str = "", what: str = "", timeout: float = 30.0):
+        end = time.monotonic() + timeout
+        while time.monotonic() < end and not self.stop.is_set():
+            if pane and not tmux_pane_exists(pane):
+                self.out(f"({what} exited right away; run it in a terminal yourself to see why)")
+                return
+            fresh = [s for s in self.find_sessions(probe_r=False) if s.path not in before and s.kind == kind]
+            if fresh:
+                self.known |= {s.path for s in fresh}
+                self._attach_session(fresh[0])
+                return
+            self.stop.wait(0.5)
+        self.out("(the new session didn't show up within 30 s; /sessions lists what's there)")
 
     def _think_default(self):
         if not self.llm.think and self.llm.model.startswith(THINK_ALWAYS):
@@ -586,6 +719,28 @@ PREFERRED_MODELS = ["qwen3.5:latest", "qwen3.5:9b", "gemma4", "qwen3:8b", "qwen3
 # Hybrid thinking models whose "think: false" Ollama 0.34 doesn't honour: with
 # it off they reason in the answer and fumble tool calls; with it on they work.
 THINK_ALWAYS = ("qwen3:",)
+
+
+def tmux_pane_exists(pane: str) -> bool:
+    try:
+        out = subprocess.run(["tmux", "list-panes", "-a", "-F", "#{pane_id}"],
+                             capture_output=True, text=True, timeout=5).stdout.split()
+    except Exception:
+        return True  # can't tell: keep waiting
+    return pane in out
+
+
+def kernel_specs() -> dict[str, dict]:
+    """Installed Jupyter kernels: name -> {display_name, language}, python3 first."""
+    try:
+        from jupyter_client.kernelspec import KernelSpecManager
+
+        specs = KernelSpecManager().get_all_specs()
+    except Exception:
+        return {"python3": {"display_name": "Python 3", "language": "python"}}
+    out = {n: {"display_name": s["spec"].get("display_name", n), "language": s["spec"].get("language", "")}
+           for n, s in specs.items()}
+    return dict(sorted(out.items(), key=lambda kv: (kv[0] != "python3", kv[1]["display_name"].lower())))
 
 
 def names_or_empty(llm) -> list[str]:

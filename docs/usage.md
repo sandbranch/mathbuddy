@@ -38,20 +38,28 @@ Useful options (all of them: `mathbuddy --help`):
 
 ## Choosing the model
 
-`/model` lists every model mathbuddy can use, numbered, with the one in use
-marked `*` and the ones already in memory marked `(loaded)`:
+`/model` opens a menu of every model mathbuddy can use, grouped by server,
+with the one in use ticked and the ones already in memory marked `loaded`.
+Type to filter, ↑/↓ to choose, Enter to switch, Esc to leave it as it is:
 
 ```
-» /model
-ollama at http://127.0.0.1:11434
-  *[1] qwen3.5:latest   (loaded)
-   [2] gpt-oss:20b
-llama.cpp at http://127.0.0.1:8081
-   [3] bonsai25   (loaded)
-   [4] qwen38
-» /model 3
-(model: bonsai25 (llama.cpp))
+╭───────────────────────────────────────────────────────────────────────╮
+│ Switch model ╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱ │
+│ >  Type to filter models                                              │
+│                                                                       │
+│ ollama · 127.0.0.1:11434 ──────────────────────────────────────────── │
+│  ✓ qwen3.5:latest                                             loaded  │
+│    gpt-oss:20b                                                        │
+│ llama.cpp · 127.0.0.1:8081 ────────────────────────────────────────── │
+│    bonsai25                                                   loaded  │
+│    qwen38                                                             │
+│                                                                       │
+│ ↑↓ choose • enter confirm • esc cancel                                │
+╰───────────────────────────────────────────────────────────────────────╯
 ```
+
+Outside an interactive terminal, `/model` prints the same list numbered
+instead.
 
 `/model qwen38` works too, and on a llama.cpp router so do the aliases of
 its presets. To start with a model, use `-m`, or set `MATHBUDDY_MODEL` in your
@@ -67,6 +75,21 @@ A router loads a model the first time it's asked something, and may unload
 another one to make room. So when you pick a llama.cpp model that isn't
 loaded while another one is, mathbuddy says which and asks first: whatever
 uses the loaded model (a benchmark, another program) would be interrupted.
+
+## Starting a session from mathbuddy: /split
+
+Inside tmux (for example when you started with `mathbuddy-split`), `/split`
+opens a menu: jotter or R, and for jotter, which kernel (Python, R, Giac,
+Octave, Wolfram, whatever Jupyter has installed). It starts it in a pane to
+the left of mathbuddy and attaches to it as soon as it's up. A second
+`/split` goes under the first, so mathbuddy keeps its width.
+
+Without the menus: `/split notes.ipynb` opens that notebook, `/split giac`
+starts jotter with that kernel, and `/split r` starts R (R needs the bridge:
+`mathbuddy setup-r`, once).
+
+mathbuddy gives full help (looking at variables, running code) in Python and
+R sessions; with other kernels it watches and suggests code for you to run.
 
 ## Which session it's attached to
 
@@ -144,11 +167,13 @@ With several blocks, add a number: `/insert 2`.
 
 | | |
 |---|---|
-| `/sessions`, `/attach [N or words]` | list sessions, switch |
+| `/sessions` | pick a session to attach to |
+| `/attach [N or words]` | attach without the menu |
+| `/split` | start jotter (any kernel) or R next to mathbuddy, and attach |
 | `/vars` | your variables |
 | `/cells` | what mathbuddy has seen you run |
 | `/run`, `/insert`, `/console`, `/copy`, `/show` `[n]` | see above |
-| `/model` | list the models on your servers, numbered |
+| `/model` | pick a model on your servers |
 | `/model N` or `/model name` | switch to that model |
 | `/hints on` or `/hints off` | automatic hints on errors |
 | `/clear` | forget the conversation |
