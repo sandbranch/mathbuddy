@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0 (unreleased)
+## 0.3.0 (2026-11-26)
 
 Upgrading: mathbuddy is now one Rust program. Install it with
 `cargo install --git https://github.com/sandbranch/mathbuddy`, run
