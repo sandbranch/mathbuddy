@@ -5,6 +5,7 @@ pub mod assistant;
 pub mod config;
 pub mod core;
 pub mod http;
+pub mod jotter;
 pub mod kernel;
 pub mod llm;
 pub mod rbridge;

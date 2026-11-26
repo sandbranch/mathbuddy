@@ -146,6 +146,10 @@ pub struct LastModel {
 pub struct LastSession {
     pub path: PathBuf,
     pub title: String,
+    /// Its folder: the same title elsewhere (every Giac scratchpad is
+    /// "Giac · jotter · scratchpad") is not the same session.
+    #[serde(default)]
+    pub cwd: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]

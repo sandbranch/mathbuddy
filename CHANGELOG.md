@@ -17,6 +17,18 @@ remove the old Python install (`uv tool uninstall mathbuddy`).
 - **Giac.** mathbuddy looks at Giac variables too (giac-kernel evaluates
   `user_expressions` since 0.2.1), each with its type and a short value,
   and knows Giac's syntax.
+- **It follows the session next to you.** When a session starts in the same
+  tmux window (you open jotter beside mathbuddy), mathbuddy moves to it,
+  unless you picked the current one yourself. Other new sessions are only
+  mentioned when they are yours (same folder, your last choice); all are in
+  `/sessions` (or `/session`). After a switch the model starts a new
+  conversation, so it doesn't mix the two sessions up.
+- **It sees what ran before it attached**, in jotter with any kernel: from
+  the kernel's history where it keeps one (Python, Giac from 0.2.2), else
+  from jotter's notebook and its autosave (Octave, older Giac), which jotter
+  writes every 30 seconds.
+- **"Your choice last time"** means that session in that folder: every Giac
+  scratchpad has the same name, so the name alone no longer counts.
 - **A kernel started on its own** (not by a frontend) is named by its folder,
   and is no longer taken for "the session you started mathbuddy from".
 

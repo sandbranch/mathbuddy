@@ -548,6 +548,24 @@ impl KernelWatch {
         Ok((reply["status"].as_str().unwrap_or("?").to_string(), text))
     }
 
+    /// Cells that ran before we attached, from elsewhere (jotter's
+    /// notebook), merged with the ones seen since.
+    pub fn seed(&self, earlier: Vec<Cell>) {
+        let mut sh = self.shared.lock().unwrap();
+        let mut all: Vec<Cell> = sh.cells.drain(..).collect();
+        for c in earlier {
+            if !all.iter().any(|s| s.count.is_some() && s.count == c.count) {
+                all.push(c);
+            }
+        }
+        // in the order they ran: counts only go up within a kernel (cells
+        // without one last)
+        all.sort_by_key(|c| c.count.unwrap_or(i64::MAX));
+        for c in all {
+            push_cell(&mut sh.cells, c);
+        }
+    }
+
     pub fn recent(&self, n: usize) -> Vec<Cell> {
         let sh = self.shared.lock().unwrap();
         sh.cells

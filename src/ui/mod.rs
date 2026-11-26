@@ -1189,7 +1189,7 @@ impl Ui {
                     self.overlay = Some(Overlay::Text(TextBox::new("Cells seen", &text)));
                 }
             }
-            "sessions" => self.open_session_picker().await,
+            "sessions" | "session" => self.open_session_picker().await,
             "attach" => {
                 let target = if arg.is_empty() { None } else { Some(arg) };
                 if self.core.attach(target, false).await && target.is_some() {

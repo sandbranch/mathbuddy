@@ -91,9 +91,16 @@ async fn giac_inspection_through_user_expressions() {
     }
     let k = start_kernel("giac", &[&kernel, "{connection_file}"]).await;
     let mut fe = Frontend::new(&k.info).await;
+    // run before mathbuddy attaches: seen through the kernel's history
+    // (giac-kernel 0.2.2 and later)
+    fe.run("before:=41+1:;").await;
     let (tx, _rx) = mpsc::unbounded_channel();
     let w = KernelWatch::connect(&k.cf, tx).await.unwrap();
     assert_eq!(w.language, "giac");
+    let seeded = w.recent(10).iter().any(|c| c.code.contains("before:=41+1"));
+    if std::env::var("GIAC_KERNEL").is_ok() {
+        assert!(seeded, "earlier cells seen: {:?}", w.recent(10));
+    }
     fe.run("a:=3:;").await;
     fe.run("p:=x^2-1:;").await;
     let vars = w.list_variables().await.unwrap();

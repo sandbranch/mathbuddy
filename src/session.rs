@@ -111,6 +111,21 @@ pub struct Found {
 }
 
 impl Found {
+    /// Add the cells jotter's notebook shows ran in this kernel (those not
+    /// seen yet). Nothing for other frontends.
+    pub fn seed_from_jotter(&self, conn: &Connection) {
+        if self.frontend != "jotter" || self.kind != Kind::Jupyter {
+            return;
+        }
+        let Some(pid) = self.pid else { return };
+        let since = std::fs::metadata(&self.path)
+            .and_then(|m| m.modified())
+            .unwrap_or(UNIX_EPOCH);
+        if let Connection::Kernel(k) = conn {
+            k.seed(crate::jotter::cells(pid, &self.cwd, since, 12));
+        }
+    }
+
     pub fn title(&self) -> String {
         format!("{} · {} · {}", self.language, self.frontend, self.label)
     }
@@ -150,7 +165,15 @@ impl Found {
     pub async fn connect(&self, done_tx: mpsc::UnboundedSender<CellDone>) -> Result<Connection> {
         Ok(match self.kind {
             Kind::RBridge => Connection::R(RBridge::connect(&self.path, done_tx).await?),
-            Kind::Jupyter => Connection::Kernel(KernelWatch::connect(&self.path, done_tx).await?),
+            Kind::Jupyter => {
+                let k = Connection::Kernel(KernelWatch::connect(&self.path, done_tx).await?);
+                // a kernel that can't list what ran before (Octave's, older
+                // Giac): jotter's notebook can
+                if k.recent(1).is_empty() {
+                    self.seed_from_jotter(&k);
+                }
+                k
+            }
         })
     }
 }
@@ -578,7 +601,9 @@ pub fn rank(mut sessions: Vec<Found>, last: Option<&crate::config::LastSession>)
             );
         } else if chain.iter().any(|p| panes.contains(p)) {
             (s.score, s.reason) = (3, "next to you in this tmux window".into());
-        } else if last.is_some_and(|l| l.path == s.path || l.title == s.title()) {
+        } else if last.is_some_and(|l| {
+            l.path == s.path || (l.title == s.title() && !l.cwd.is_empty() && l.cwd == s.cwd)
+        }) {
             (s.score, s.reason) = (2, "your choice last time".into());
         } else if !s.cwd.is_empty() && s.cwd == here {
             (s.score, s.reason) = (1, "same folder as you".into());
@@ -641,13 +666,34 @@ mod tests {
         let last = crate::config::LastSession {
             path: PathBuf::from("/run/gone.json"),
             title: "Python · jotter · old.ipynb".into(),
+            cwd: "/work".into(),
         };
-        let r = rank(
-            vec![found("old.ipynb", 1.0), found("new.ipynb", 2.0)],
-            Some(&last),
-        );
+        let mut old = found("old.ipynb", 1.0);
+        old.cwd = "/work".into();
+        let r = rank(vec![old, found("new.ipynb", 2.0)], Some(&last));
         assert_eq!(r[0].label, "old.ipynb");
         assert_eq!(r[0].reason, "your choice last time");
+    }
+
+    #[test]
+    fn last_choice_needs_the_same_folder() {
+        // every Giac scratchpad has the same title: only the one in the
+        // folder you chose last time is that choice
+        let last = crate::config::LastSession {
+            path: PathBuf::from("/run/gone.json"),
+            title: "Python · jotter · scratchpad".into(),
+            cwd: "/home/me/maths".into(),
+        };
+        let mut elsewhere = found("scratchpad", 2.0);
+        elsewhere.cwd = "/tmp/test".into();
+        let mut mine = found("scratchpad", 1.0);
+        mine.cwd = "/home/me/maths".into();
+        let r = rank(vec![elsewhere, mine], Some(&last));
+        assert_eq!(
+            (r[0].cwd.as_str(), r[0].reason.as_str()),
+            ("/home/me/maths", "your choice last time")
+        );
+        assert_eq!(r[1].score, 0);
     }
 
     #[test]

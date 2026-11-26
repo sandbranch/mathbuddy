@@ -41,6 +41,11 @@ pub struct Core {
     /// The last list of sessions shown, for /attach N.
     pub listing: Vec<Found>,
     pub known: HashSet<PathBuf>,
+    /// You chose the attached session yourself (-s, /attach, the picker):
+    /// mathbuddy doesn't move to a new session next to you.
+    pub chosen: bool,
+    /// When jotter last wrote the attached notebook, as read.
+    jotter_written: Option<std::time::SystemTime>,
     /// Code blocks of the last answer (code that ran first), for /run, /copy...
     pub blocks: Vec<String>,
     pub always_run: bool,
@@ -75,6 +80,8 @@ impl Core {
             current: None,
             listing: Vec::new(),
             known: HashSet::new(),
+            chosen: false,
+            jotter_written: None,
             blocks: Vec::new(),
             notes: Vec::new(),
             done_tx,
@@ -230,12 +237,15 @@ impl Core {
         State::update(|st| st.model = Some(last));
     }
 
-    /// Remember the attached session as your choice for next time.
-    pub fn remember_session(&self) {
+    /// Remember the attached session as your choice for next time (and
+    /// for now: no moving to new sessions on its own).
+    pub fn remember_session(&mut self) {
+        self.chosen = true;
         if let Some(s) = &self.current {
             let last = LastSession {
                 path: s.path.clone(),
                 title: s.title(),
+                cwd: s.cwd.clone(),
             };
             State::update(|st| st.session = Some(last));
         }
@@ -434,8 +444,15 @@ impl Core {
                     String::new()
                 };
                 self.say(format!("attached: {}{why}{earlier}", s.title()));
+                // the conversation was about the other session: a small
+                // model mixes them up, so it starts again (the screen keeps it)
+                if self.conn.is_some() && !self.assistant.history.is_empty() {
+                    self.assistant.clear();
+                    self.say("(the model starts a new conversation for this session)");
+                }
                 self.conn = Some(Arc::new(c));
                 self.current = Some(s.clone());
+                self.jotter_written = None;
                 true
             }
             Err(e) => {
@@ -474,26 +491,59 @@ impl Core {
             self.attach(target.as_deref(), true).await;
             return;
         }
+        // jotter's notebook changed: cells that ran before we attached
+        // may be in it now
+        if let (Some(c), Some(s)) = (&self.conn, &self.current)
+            && let Some(pid) = s.pid.filter(|_| s.frontend == "jotter")
+        {
+            let written = crate::jotter::written(pid, &s.cwd);
+            if written.is_some() && written != self.jotter_written {
+                self.jotter_written = written;
+                s.seed_from_jotter(c);
+            }
+        }
         let found = self.find_sessions(false).await;
         let fresh: Vec<Found> = found
             .iter()
             .filter(|s| !self.known.contains(&s.path))
             .cloned()
             .collect();
-        if !fresh.is_empty() {
-            self.known.extend(found.iter().map(|s| s.path.clone()));
-            self.listing = found.clone();
-            for s in fresh {
-                let why = if s.score > 0 {
-                    format!(", {}", s.reason)
-                } else {
-                    String::new()
-                };
-                self.say(format!(
-                    "(new session: {}{why}; /sessions to switch)",
-                    s.title()
-                ));
+        if fresh.is_empty() {
+            return;
+        }
+        self.known.extend(found.iter().map(|s| s.path.clone()));
+        self.listing = found.clone();
+        // a session next to you (or the one you run inside) replaces one
+        // that isn't, unless you chose the current one yourself
+        let here = |score: u8| score >= 3;
+        let current_score = self
+            .current
+            .as_ref()
+            .and_then(|c| found.iter().find(|s| s.path == c.path))
+            .map(|s| s.score)
+            .unwrap_or(0);
+        if !self.chosen
+            && !here(current_score)
+            && let Some(best) = fresh.iter().filter(|s| here(s.score)).max_by(|a, b| {
+                (a.score, a.started)
+                    .partial_cmp(&(b.score, b.started))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+        {
+            let best = best.clone();
+            if self.attach_to(&best, true).await {
+                self.say("(switched: /sessions to go back)");
+                return;
             }
+        }
+        // the others are only mentioned when they are yours: next to you,
+        // in your folder, or your choice last time; all are in /sessions
+        for s in fresh.iter().filter(|s| s.score > 0) {
+            self.say(format!(
+                "(new session: {}, {}; /sessions to switch)",
+                s.title(),
+                s.reason
+            ));
         }
     }
 
