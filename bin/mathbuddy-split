@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Open jotter and mathbuddy side by side in tmux.
+#   mathbuddy-split [notebook.ipynb] [-- mathbuddy options...]
+# Inside tmux: splits the current window. Outside: starts a new session.
+# MATHBUDDY_WIDTH sets the helper pane width (default 38%).
+set -euo pipefail
+
+nb=()
+if [[ $# -gt 0 && "$1" != "--" ]]; then nb=("$1"); shift; fi
+[[ "${1:-}" == "--" ]] && shift
+mb_args=("$@")
+
+width="${MATHBUDDY_WIDTH:-38%}"
+q() { printf '%q ' "$@"; }
+jotter_cmd="jotter $(q "${nb[@]}")"
+mb_cmd="mathbuddy $(q "${mb_args[@]}")"
+
+if [[ -n "${TMUX:-}" ]]; then
+    tmux split-window -h -l "$width" -c "$PWD" "$mb_cmd"
+    tmux select-pane -L
+    eval "exec $jotter_cmd"
+else
+    session="math-$(date +%H%M%S)"
+    tmux new-session -d -s "$session" -c "$PWD" "$jotter_cmd"
+    tmux split-window -h -l "$width" -t "$session" -c "$PWD" "$mb_cmd"
+    tmux select-pane -t "$session" -L
+    exec tmux attach -t "$session"
+fi
