@@ -29,11 +29,44 @@ Useful options (all of them: `mathbuddy --help`):
 | | |
 |---|---|
 | `--cpu` | keep the model off the graphics card (when the card is busy) |
-| `-m MODEL` | use a specific Ollama model |
+| `-m MODEL` | use a specific model, on Ollama or on llama.cpp |
+| `--llamacpp ADDRESS:PORT` | also offer the models of a llama.cpp `llama-server` |
 | `--host ADDRESS:11434` | use another machine's Ollama |
 | `-s WORDS` | attach to a particular session, e.g. `-s rstudio` or `-s demo.ipynb` |
 | `-y` | run code without asking each time (be sure you want this) |
 | `--no-hints` | no automatic hint when something you run fails |
+
+## Choosing the model
+
+`/model` lists every model mathbuddy can use, numbered, with the one in use
+marked `*` and the ones already in memory marked `(loaded)`:
+
+```
+» /model
+ollama at http://127.0.0.1:11434
+  *[1] qwen3.5:latest   (loaded)
+   [2] gpt-oss:20b
+llama.cpp at http://127.0.0.1:8081
+   [3] bonsai25   (loaded)
+   [4] qwen38
+» /model 3
+(model: bonsai25 (llama.cpp))
+```
+
+`/model qwen38` works too, and on a llama.cpp router so do the aliases of
+its presets. To start with a model, use `-m`, or set `MATHBUDDY_MODEL` in your
+shell profile to always start with it.
+
+llama.cpp models appear when mathbuddy knows where `llama-server` is:
+`--llamacpp 127.0.0.1:8081`, or `MATHBUDDY_LLAMACPP_HOST=127.0.0.1:8081` in
+your shell profile. Both a single-model `llama-server` and a router (several
+presets, loaded on demand) work. mathbuddy never picks a llama.cpp model by
+itself, and it leaves sampling to the server's settings for each model.
+
+A router loads a model the first time it's asked something, and may unload
+another one to make room. So when you pick a llama.cpp model that isn't
+loaded while another one is, mathbuddy says which and asks first: whatever
+uses the loaded model (a benchmark, another program) would be interrupted.
 
 ## Which session it's attached to
 
@@ -115,7 +148,8 @@ With several blocks, add a number: `/insert 2`.
 | `/vars` | your variables |
 | `/cells` | what mathbuddy has seen you run |
 | `/run`, `/insert`, `/console`, `/copy`, `/show` `[n]` | see above |
-| `/model [name]` | show or switch the model |
+| `/model` | list the models on your servers, numbered |
+| `/model N` or `/model name` | switch to that model |
 | `/hints on` or `/hints off` | automatic hints on errors |
 | `/clear` | forget the conversation |
 | `/quit` | quit (or Ctrl-D) |

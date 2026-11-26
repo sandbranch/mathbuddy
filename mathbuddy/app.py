@@ -14,7 +14,7 @@ import time
 from . import __version__
 from .assistant import Assistant, code_blocks
 from .kernel import KernelWatch, kernel_alive
-from .llm import Ollama
+from .llm import LlamaCpp, Models, Ollama
 from .rbridge import BRIDGE_R
 from .sessions import Session, discover, pick, rank
 
@@ -35,7 +35,8 @@ session it shows the code and asks: y(es), n(o), or a(lways for this session).
                  (rstudio, jotter, a notebook or project name); no argument: my suggestion
   /insert [n]    RStudio: put code block n into your open script at the cursor
   /console [n]   RStudio: send code block n to the console, as if you typed it
-  /model [name]  show or switch the Ollama model
+  /model         list the models on your Ollama and llama.cpp servers, numbered
+  /model N|name  switch to model N from that list, or by name
   /hints on|off  one-line hints when a cell raises an error
   /clear         forget the conversation (not the cells)
   /help, /quit   (Ctrl-C stops an answer, Ctrl-D quits)
@@ -74,8 +75,12 @@ def copy_to_clipboard(text: str) -> str:
 class App:
     def __init__(self, args):
         self.args = args
-        self.llm = Ollama(args.model or PREFERRED_MODELS[0], host=args.host, cpu=args.cpu,
-                          threads=args.threads, think=args.think, num_ctx=args.ctx)
+        servers = [Ollama(PREFERRED_MODELS[0], host=args.host, cpu=args.cpu,
+                          threads=args.threads, think=args.think, num_ctx=args.ctx)]
+        if args.llamacpp:
+            servers.append(LlamaCpp(args.llamacpp, think=args.think))
+        self.llm = Models(servers)
+        self.model_listing: list[tuple[object, str, bool]] = []
         self.assistant = Assistant(self.llm, confirm=self.confirm_run)
         self.always_run = args.yes
         self.interactive_mode = False
@@ -271,15 +276,11 @@ class App:
                         self.out(f"({fn(code)})")
                     except Exception as e:
                         self.out(f"(/{cmd} failed: {e})")
-        elif cmd == "model":
+        elif cmd in ("model", "models"):
             if arg:
-                self.llm.model = arg
-            try:
-                names = self.llm.models()
-                self.out(f"model: {self.llm.model}{' (CPU only)' if self.llm.cpu else ''}; "
-                         f"available: {', '.join(names)}")
-            except Exception as e:
-                self.out(f"model: {self.llm.model} (could not list models: {e})")
+                self.switch_model(arg)
+            else:
+                self.print_models()
         elif cmd == "hints":
             self.hints = arg != "off"
             self.out(f"(hints {'on' if self.hints else 'off'})")
@@ -291,19 +292,24 @@ class App:
         return True
 
     def choose_model(self):
-        """With no model given, use the best one this Ollama actually has."""
-        try:
-            names = self.llm.models()
-        except Exception as e:
-            self.out(f"(can't reach Ollama at {self.llm.base}: {e})")
-            return
+        """-m picks a model on any configured server. Without it, use the best
+        one Ollama has: never a llama.cpp model, since asking a llama.cpp router
+        for a model it hasn't loaded makes it load one, maybe in place of another."""
         if self.args.model:
-            found = find_model(names, self.args.model)
-            if found is None:
-                self.out(f"(model {self.args.model} isn't on {self.llm.base}; it has: {', '.join(names) or 'none'})")
+            hit = self.locate_model(self.args.model)
+            if hit:
+                if hit[0].kind == "llama.cpp":
+                    self.confirm_llamacpp_load(*hit, ask=False)  # named with -m: warn, don't ask
+                self.llm.use(*hit)
+                self._think_default()
             else:
-                self.llm.model = found
-            self._think_default()
+                self.out(f"(model {self.args.model} isn't on any of your servers; /model lists what they have)")
+            return
+        try:
+            names = self.llm.servers[0].models()
+        except Exception as e:
+            self.out(f"(can't reach Ollama at {self.llm.servers[0].base}: {e}"
+                     + ("; /model lists the llama.cpp models" if len(self.llm.servers) > 1 else "") + ")")
             return
         for m in PREFERRED_MODELS:
             found = find_model(names, m)
@@ -314,6 +320,81 @@ class App:
                 return
         self.out(f"(none of {', '.join(PREFERRED_MODELS)} is on {self.llm.base}; it has: "
                  f"{', '.join(names) or 'none'}. Pick one with -m, or `ollama pull qwen3.5`)")
+
+    def locate_model(self, want: str):
+        """(server, name) for a model name on any server, Ollama first."""
+        for s in self.llm.servers:
+            try:
+                name = find_model(s.models(), want) if s.kind == "ollama" else s.find(want)
+            except Exception:
+                continue
+            if name:
+                return s, name
+        return None
+
+    def print_models(self):
+        self.model_listing = []
+        lines = []
+        for server, models, err in self.llm.catalog():
+            lines.append(f"{server.kind} at {server.base}" + (f": not reachable ({err})" if models is None else ""))
+            for name, loaded in models or []:
+                self.model_listing.append((server, name, loaded))
+                cur = server is self.llm.server and name == self.llm.model
+                lines.append(f"  {'*' if cur else ' '}[{len(self.model_listing)}] {name}"
+                             + ("   (loaded)" if loaded else ""))
+            if models == []:
+                lines.append("  (no models)")
+        self.out("\n".join(lines))
+        self.out("(* in use; /model N or /model NAME switches"
+                 + ("; a llama.cpp model that isn't loaded gets loaded when you ask something" if
+                    any(s.kind == "llama.cpp" for s in self.llm.servers) else "") + ")")
+
+    def switch_model(self, arg: str):
+        hit = None
+        if arg.isdigit() and self.model_listing:  # numbers refer to the last list shown
+            i = int(arg) - 1
+            if 0 <= i < len(self.model_listing):
+                server, name, _ = self.model_listing[i]
+                hit = (server, name)
+        if hit is None:
+            hit = self.locate_model(arg)
+        if hit is None:
+            self.out(f"(no model {arg!r} on your servers; /model lists them)")
+            return
+        server, name = hit
+        if server.kind == "llama.cpp" and not self.confirm_llamacpp_load(server, name):
+            self.out(f"(staying with {self.llm.label()})")
+            return
+        self.llm.use(server, name)
+        self._think_default()
+        note = ""
+        if server.kind == "llama.cpp" and (self.args.cpu or self.args.threads):
+            note = "; --cpu and --threads apply to Ollama only, llama.cpp runs as its preset says"
+        self.out(f"(model: {self.llm.label()}{note})")
+
+    def confirm_llamacpp_load(self, server, name: str, ask: bool = True) -> bool:
+        """A llama.cpp router loads a model on first use and may unload another
+        to make room, which would cut into whatever that one is doing. Ask."""
+        try:
+            cat = server.catalog()
+        except Exception:
+            return True
+        if dict(cat).get(name):
+            return True
+        others = [n for n, loaded in cat if loaded and n != name]
+        if not others:
+            return True
+        self.out(f"({name} isn't loaded on {server.base}. Asking it something loads it, and the server "
+                 f"may unload {', '.join(others)} to make room, interrupting anything using it.)")
+        if not ask or not self.interactive_mode:
+            return True  # named on the command line: the user asked for exactly this
+        from prompt_toolkit import prompt
+
+        try:
+            a = prompt(f"switch to {name} anyway? [y]es / [n]o: ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            return False
+        return a in ("y", "yes")
 
     def _think_default(self):
         if not self.llm.think and self.llm.model.startswith(THINK_ALWAYS):
@@ -440,7 +521,7 @@ class App:
             k = f"{what} · {len(self.watch.recent(100))} seen"
         else:
             k = "no session (/sessions)"
-        return (f" mathbuddy · {self.llm.model}{' (CPU)' if self.llm.cpu else ''} · {k}"
+        return (f" mathbuddy · {self.llm.label()} · {k}"
                 f" · hints {'on' if self.hints else 'off'} · /help ")
 
     def interactive(self):
@@ -507,6 +588,13 @@ PREFERRED_MODELS = ["qwen3.5:latest", "qwen3.5:9b", "gemma4", "qwen3:8b", "qwen3
 THINK_ALWAYS = ("qwen3:",)
 
 
+def names_or_empty(llm) -> list[str]:
+    try:
+        return llm.models()
+    except Exception:
+        return []
+
+
 def find_model(names: list[str], want: str) -> str | None:
     """The server's name for `want`: exact, `want:latest`, or a quantisation
     variant like qwen3.5:4b-q4_K_M for qwen3.5:4b."""
@@ -558,6 +646,7 @@ def doctor(argv: list[str]) -> int:
 
     print(f"{version_string()}, from {SOURCE_DIR}")
 
+    llama_host = os.environ.get("MATHBUDDY_LLAMACPP_HOST")
     print("Ollama (the model)")
     llm = Ollama(PREFERRED_MODELS[0], host=os.environ.get("MATHBUDDY_OLLAMA_HOST"))
     try:
@@ -569,10 +658,12 @@ def doctor(argv: list[str]) -> int:
         row("ok", f"reachable at {llm.base} (Ollama {ver})")
         names = llm.models()
         want = os.environ.get("MATHBUDDY_MODEL")
-        if want:
-            found = find_model(names, want)
-            row("ok" if found else "fix", f"MATHBUDDY_MODEL={want}" + ("" if found else " is not on this server"),
-                "" if found else f"ollama pull {want}")
+        if want and (found := find_model(names, want)):
+            row("ok", f"MATHBUDDY_MODEL={want}")
+        elif want and llama_host:
+            row("--", f"MATHBUDDY_MODEL={want} is not on Ollama (checked under llama.cpp below)")
+        elif want:
+            row("fix", f"MATHBUDDY_MODEL={want} is not on this server", f"ollama pull {want}")
         else:
             best = next((f for m in PREFERRED_MODELS if (f := find_model(names, m))), None)
             row("ok" if best else "fix", f"model: {best} (the best one this server has)" if best else
@@ -582,6 +673,25 @@ def doctor(argv: list[str]) -> int:
         row("fix", f"cannot reach Ollama at {llm.base} ({e})",
             "start it (systemctl --user start ollama), or point at another machine: "
             "mathbuddy --host ADDRESS:11434")
+
+    print("llama.cpp (optional, more models)")
+    if not llama_host:
+        row("--", "not set up (to use llama-server models: MATHBUDDY_LLAMACPP_HOST=ADDRESS:PORT)")
+    else:
+        lc = LlamaCpp(llama_host)
+        try:
+            cat = lc.catalog()
+            loaded = [n for n, on in cat if on]
+            row("ok", f"reachable at {lc.base}: {len(cat)} model(s)"
+                + (f", loaded: {', '.join(loaded)}" if loaded else ", none loaded"))
+            want = os.environ.get("MATHBUDDY_MODEL")
+            if want and not find_model(names_or_empty(llm), want):
+                hit = lc.find(want)
+                row("ok" if hit else "fix", f"MATHBUDDY_MODEL={want}" + ("" if hit else " is on neither server"),
+                    "" if hit else "pick one from /model in mathbuddy")
+        except Exception as e:
+            row("fix", f"cannot reach llama-server at {lc.base} ({getattr(e, 'reason', e)})",
+                "start llama-server, or fix MATHBUDDY_LLAMACPP_HOST")
 
     print("R and RStudio (optional)")
     if not shutil.which("Rscript"):
@@ -661,8 +771,12 @@ def main(argv=None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("question", nargs="*", help="ask once and exit (otherwise interactive)")
     p.add_argument("-m", "--model", default=env("MATHBUDDY_MODEL"),
-                   help=f"Ollama model (default: the first of {', '.join(PREFERRED_MODELS)} that the server has)")
+                   help=f"model: on Ollama, or on llama.cpp with --llamacpp (default: the first of "
+                   f"{', '.join(PREFERRED_MODELS)} that Ollama has). In the chat, /model lists and switches")
     p.add_argument("--host", default=env("MATHBUDDY_OLLAMA_HOST"), help="Ollama address (default $OLLAMA_HOST)")
+    p.add_argument("--llamacpp", default=env("MATHBUDDY_LLAMACPP_HOST"), metavar="HOST",
+                   help="llama.cpp llama-server address, a single model or a router (e.g. 127.0.0.1:8081; "
+                   "also MATHBUDDY_LLAMACPP_HOST). Its models show up in /model")
     p.add_argument("--cpu", action="store_true", default=env("MATHBUDDY_CPU") == "1",
                    help="keep the model off the GPU (num_gpu=0); also MATHBUDDY_CPU=1")
     p.add_argument("--threads", type=int, default=int(env("MATHBUDDY_THREADS", "0")) or None,

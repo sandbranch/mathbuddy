@@ -57,6 +57,12 @@ network or VPN. Ollama's default is 127.0.0.1, which only the machine
 itself can reach. To make it permanent on the machine you
 run mathbuddy on, set `MATHBUDDY_OLLAMA_HOST` in your shell profile.
 
+**Models in llama.cpp:** if you run llama.cpp's `llama-server` (one model,
+or a router with several presets), set `MATHBUDDY_LLAMACPP_HOST` to its
+address, for example `127.0.0.1:8081`, in your shell profile. Its models then
+show up in `/model` next to Ollama's, and `mathbuddy doctor` checks it. Ollama
+stays the default; a llama.cpp model is used only when you pick one.
+
 **GPU or CPU:** Ollama uses the graphics card by itself when it can. When
 the card is busy with something else, `mathbuddy --cpu` keeps the model off
 it entirely (`--threads N` caps the CPU threads). On a 4 GB card, keep the

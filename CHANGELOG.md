@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **llama.cpp models.** mathbuddy also talks to llama.cpp's `llama-server`,
+  a single model or a router with several presets: `--llamacpp ADDRESS:PORT`
+  or `MATHBUDDY_LLAMACPP_HOST`. Tool calls, thinking and streaming work as
+  with Ollama; sampling is left to the server's preset.
+- **Model selector.** `/model` lists the models on Ollama and llama.cpp,
+  numbered, with the one in use and the loaded ones marked; `/model N` or
+  `/model name` switches. Before picking a llama.cpp model that would make
+  the router unload another one, mathbuddy asks.
+- `-m` and `MATHBUDDY_MODEL` find models on either server (router aliases
+  too), and `mathbuddy doctor` checks the llama.cpp server when one is set.
+
 ## 0.2.0 (2026-11-10)
 
 Upgrading: `cd ~/code/mathbuddy && git pull`. No new dependencies. Restart
