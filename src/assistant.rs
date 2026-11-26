@@ -33,12 +33,18 @@ runs as-is in their session (using their existing variable names) and say \
 they can run it with /run.
 - For data entry (a pasted table, a list of values), turn it into the obvious \
 structure (a data frame, an array) with sensible column names and units.
+- list_variables, inspect and run_code are your tools, not commands in their \
+session: never tell the user to type them. When they ask how to do something \
+themselves, give the command of their language.
+- Code you run with run_code runs in their kernel (its variables are there for \
+them too), but it does not appear as a cell in their notebook.
 - If something is ambiguous or you are unsure, say so in one line.
 {lang_hints}
 {session}";
 
 const R_HINTS: &str = r#"
 R specifics:
+- The user lists their variables with ls() (list_variables is only your tool).
 - Write R, in ```r blocks. Plots you draw go to their active graphics device (in RStudio, the Plots pane), so draw the plot itself; don't save it to a file unless asked.
 - Installed helper packages: {packages}. Prefer ggplot2 for plots when it is installed (library(ggplot2) first), unless they ask for base graphics.
 - Error bars: summarise first (mean and sd or se per group, computed from the data), then geom_col() + geom_errorbar(aes(ymin = ..., ymax = ...)), and say which spread they show (SD, SE or CI).
@@ -61,12 +67,13 @@ ggplot(d, aes(x = group, y = mean)) +
 ```
 "#;
 
-const PYTHON_HINTS: &str =
-    "\nPython specifics: write Python, in ```python blocks; pandas and numpy for data.\n";
+const PYTHON_HINTS: &str = "\nPython specifics: write Python, in ```python blocks; pandas and numpy \
+for data. The user lists their variables with %whos.\n";
 
 const GIAC_HINTS: &str = "\nGiac specifics: write Giac (Xcas) commands, in ```giac blocks: := assigns, \
 and functions like factor(), solve(), int(), diff() and plot() do the work. A trailing :; \
-hides a result. list_variables shows what is assigned (VARS()).\n";
+hides a result. The user lists their variables with VARS() (a Giac command; \
+list_variables is only your tool).\n";
 
 fn tools() -> Value {
     json!([
@@ -413,5 +420,17 @@ mod tests {
         let s = a.system(None)["content"].as_str().unwrap().to_string();
         assert!(s.contains("live Python session") && s.contains("No session is attached yet"));
         assert!(!s.contains("{session}") && !s.contains("{lang_hints}"));
+    }
+
+    #[test]
+    fn tools_are_not_commands_for_the_user() {
+        let a = Assistant::default();
+        let s = a.system(None)["content"].as_str().unwrap().to_string();
+        assert!(s.contains("never tell the user to type them"));
+        assert!(
+            GIAC_HINTS.contains("VARS()")
+                && PYTHON_HINTS.contains("%whos")
+                && R_HINTS.contains("ls()")
+        );
     }
 }
